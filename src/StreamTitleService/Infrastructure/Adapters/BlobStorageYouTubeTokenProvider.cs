@@ -12,8 +12,8 @@ namespace StreamTitleService.Infrastructure.Adapters;
 /// <summary>
 /// Loads YouTube OAuth2 credentials from Azure Blob Storage.
 ///
-/// The Python YT-Title-Updater uses token.pickle (Python-specific binary format).
-/// For C#, we store the Google OAuth credentials as JSON in Blob Storage instead:
+/// The YT-Title-Updater uses token.json (Google OAuth2 JSON format).
+/// The same format is stored in Azure Blob Storage as youtube-tokens/token.json:
 /// {
 ///   "access_token": "...",
 ///   "refresh_token": "...",
