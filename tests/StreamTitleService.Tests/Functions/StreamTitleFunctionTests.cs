@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using Azure.Messaging.ServiceBus;
 using FluentAssertions;
+using Microsoft.Extensions.Logging;
 using Moq;
 using StreamTitleService.Application.Ports.Inbound;
 using StreamTitleService.Domain.Events;
@@ -13,6 +14,7 @@ namespace StreamTitleService.Tests.Functions;
 public class StreamTitleFunctionTests
 {
     private readonly Mock<IStreamTitleHandler> _handler = new();
+    private readonly Mock<ILogger<StreamTitleFunction>> _logger = new();
 
     private static ServiceBusReceivedMessage CreateMessage(string body)
     {
@@ -79,34 +81,27 @@ public class StreamTitleFunctionTests
     }
 
     [Fact]
-    public async Task Run_MissingRequiredFields_ShouldDeserializeWithDefaults()
+    public async Task Run_MissingRequiredFields_ShouldThrowDueToValidation()
     {
-        // JSON with only eventType; all other fields default to empty/zero
+        // JSON with only eventType; timestamp will default to DateTimeOffset.MinValue, which fails validation
         var json = """{"eventType":"StreamStarted"}""";
         var message = CreateMessage(json);
 
-        _handler
-            .Setup(h => h.HandleAsync(It.IsAny<StreamStartedEvent>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-
         var function = new StreamTitleFunction(_handler.Object);
-        await function.RunAsync(message, CancellationToken.None);
+        var act = () => function.RunAsync(message, CancellationToken.None);
 
+        await act.Should().ThrowAsync<ArgumentException>();
         _handler.Verify(h => h.HandleAsync(
-            It.Is<StreamStartedEvent>(e =>
-                e.EventType == "StreamStarted" &&
-                e.Location == "" &&
-                e.Source == "" &&
-                e.Data.Title == null),
+            It.IsAny<StreamStartedEvent>(),
             It.IsAny<CancellationToken>()),
-            Times.Once);
+            Times.Never);
     }
 
     [Fact]
     public async Task Run_ExtraUnknownFields_ShouldIgnoreAndProcess()
     {
         // JSON contains unknown properties that don't exist on StreamStartedEvent
-        var json = """{"eventType":"StreamStarted","source":"test","unknownField":"ignored","anotherField":42,"data":{"title":"My Title"}}""";
+        var json = """{"eventType":"StreamStarted","source":"test","timestamp":"2026-03-27T12:00:00Z","location":"virtual","unknownField":"ignored","anotherField":42,"data":{"title":"My Title"}}""";
         var message = CreateMessage(json);
 
         _handler
@@ -156,5 +151,37 @@ public class StreamTitleFunctionTests
             It.IsAny<StreamStartedEvent>(),
             It.IsAny<CancellationToken>()),
             Times.Never);
+    }
+
+    // TDD Cycle 1: Timestamp validation
+    [Fact]
+    public async Task Run_DefaultTimestamp_ShouldThrow()
+    {
+        // timestamp defaults to DateTimeOffset.MinValue if missing from JSON
+        var json = """{"eventType":"StreamStarted","source":"test","location":"virtual","data":{}}""";
+        var function = new StreamTitleFunction(_handler.Object, _logger.Object);
+        var act = () => function.Run(json);
+        await act.Should().ThrowAsync<ArgumentException>().WithMessage("*Timestamp*");
+    }
+
+    // TDD Cycle 2: Title max length validation
+    [Fact]
+    public async Task Run_TitleExceedsMaxLength_ShouldThrow()
+    {
+        var longTitle = new string('a', 201);
+        var json = $$$"""{"eventType":"StreamStarted","source":"test","timestamp":"2026-03-27T12:00:00Z","location":"virtual","data":{"title":"{{{longTitle}}}"}}""";
+        var function = new StreamTitleFunction(_handler.Object, _logger.Object);
+        var act = () => function.Run(json);
+        await act.Should().ThrowAsync<ArgumentException>().WithMessage("*exceeds*");
+    }
+
+    // TDD Cycle 3: Location validation
+    [Fact]
+    public async Task Run_EmptyLocation_ShouldThrow()
+    {
+        var json = """{"eventType":"StreamStarted","source":"test","timestamp":"2026-03-27T12:00:00Z","location":"","data":{}}""";
+        var function = new StreamTitleFunction(_handler.Object, _logger.Object);
+        var act = () => function.Run(json);
+        await act.Should().ThrowAsync<ArgumentException>().WithMessage("*Location*");
     }
 }

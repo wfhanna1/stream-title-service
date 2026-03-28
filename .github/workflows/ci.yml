@@ -25,3 +25,12 @@ jobs:
 
       - name: Test
         run: dotnet test --no-build --configuration Release --filter "Category!=Integration" --verbosity normal
+
+      - name: Check for vulnerable packages
+        run: |
+          dotnet list package --vulnerable --include-transitive 2>&1 | tee vulnerability-report.txt
+          if grep -q "has the following vulnerable packages" vulnerability-report.txt; then
+            echo "::error::Vulnerable packages detected. See output above."
+            cat vulnerability-report.txt
+            exit 1
+          fi

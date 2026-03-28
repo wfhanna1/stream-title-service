@@ -20,6 +20,11 @@ public class StreamTitleFunction
         _logger = logger;
     }
 
+    public async Task Run(string json)
+    {
+        await RunCoreAsync(json, CancellationToken.None);
+    }
+
     [Function(nameof(StreamTitleFunction))]
     public async Task RunAsync(
         [ServiceBusTrigger(
@@ -34,7 +39,12 @@ public class StreamTitleFunction
             message.MessageId);
 
         var body = message.Body.ToString();
-        var evt = JsonSerializer.Deserialize<StreamStartedEvent>(body)
+        await RunCoreAsync(body, cancellationToken);
+    }
+
+    private async Task RunCoreAsync(string json, CancellationToken cancellationToken)
+    {
+        var evt = JsonSerializer.Deserialize<StreamStartedEvent>(json)
             ?? throw new InvalidOperationException("Failed to deserialize StreamStartedEvent: null result");
 
         if (evt.SchemaVersion != null && evt.SchemaVersion != "1")
@@ -48,6 +58,15 @@ public class StreamTitleFunction
             _logger?.LogWarning("Ignoring event with type '{EventType}', expected 'StreamStarted'", evt.EventType);
             return;
         }
+
+        if (evt.Timestamp == default)
+            throw new ArgumentException("Timestamp is required and must not be default");
+
+        if (evt.Data.Title is { Length: > 200 })
+            throw new ArgumentException("Title exceeds maximum length of 200 characters");
+
+        if (string.IsNullOrWhiteSpace(evt.Location))
+            throw new ArgumentException("Location is required");
 
         _logger?.LogInformation(
             "Processing StreamStartedEvent for location {Location} from {Source}",

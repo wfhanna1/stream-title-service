@@ -35,6 +35,9 @@ jobs:
       - name: Publish
         run: dotnet publish src/StreamTitleService/StreamTitleService.csproj --configuration Release --output ./publish
 
+      # TODO: Migrate to OIDC workload identity federation for short-lived credentials
+      # See: https://learn.microsoft.com/en-us/azure/developer/github/connect-from-azure-openid-connect
+      # Requires: Azure AD federated credential on the service principal
       - name: Azure Login
         uses: azure/login@v2
         with:
