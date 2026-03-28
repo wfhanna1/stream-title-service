@@ -104,6 +104,7 @@ public class ServiceBusIntegrationTests : IAsyncDisposable
     // Test 2: Message properties (ContentType, Subject) are preserved
     //         through send/receive.
     // ------------------------------------------------------------------
+
     [SkippableFact]
     public async Task SendAndReceive_MessageProperties_ArePreserved()
     {
@@ -139,5 +140,58 @@ public class ServiceBusIntegrationTests : IAsyncDisposable
         received.Should().NotBeNull("the message should be received within 30 seconds");
         received!.ContentType.Should().Be("application/json");
         received.Subject.Should().Be("StreamTitleSet");
+    }
+
+    // ------------------------------------------------------------------
+    // Test 3: Send a StreamStartedEvent and verify it round-trips through
+    //         the Service Bus topic/subscription with correct deserialization.
+    // ------------------------------------------------------------------
+    [SkippableFact]
+    public async Task SendStreamStartedEvent_ReceiveAndDeserialize_RoundTrip()
+    {
+        Skip.If(string.IsNullOrWhiteSpace(ConnectionString),
+            "INTEGRATION_TEST_SB_CONNECTION is not set; skipping integration test.");
+
+        var sentEvent = new StreamStartedEvent
+        {
+            SchemaVersion = "1.0",
+            EventType = "StreamStarted",
+            Source = "integration-test",
+            Timestamp = new DateTimeOffset(2026, 3, 27, 18, 0, 0, TimeSpan.Zero),
+            Location = "st. mary and st. joseph",
+            TraceId = "trace-abc123",
+            Data = new StreamStartedData
+            {
+                Title = "Friday, March 27, 2026 - Vespers"
+            }
+        };
+
+        var json = JsonSerializer.Serialize(sentEvent);
+        var message = new ServiceBusMessage(Encoding.UTF8.GetBytes(json))
+        {
+            ContentType = "application/json",
+            Subject = sentEvent.EventType
+        };
+
+        await _sender!.SendMessageAsync(message);
+
+        var received = await _receiver!.ReceiveMessageAsync(maxWaitTime: TimeSpan.FromSeconds(30));
+
+        received.Should().NotBeNull("the StreamStarted message should be received within 30 seconds");
+
+        var body = received!.Body.ToString();
+        var deserialized = JsonSerializer.Deserialize<StreamStartedEvent>(body);
+
+        deserialized.Should().NotBeNull();
+        deserialized!.EventType.Should().Be("StreamStarted");
+        deserialized.Source.Should().Be("integration-test");
+        deserialized.Location.Should().Be("st. mary and st. joseph");
+        deserialized.SchemaVersion.Should().Be("1.0");
+        deserialized.TraceId.Should().Be("trace-abc123");
+        deserialized.Data.Title.Should().Be("Friday, March 27, 2026 - Vespers");
+        deserialized.Timestamp.Should().Be(sentEvent.Timestamp);
+
+        received.ContentType.Should().Be("application/json");
+        received.Subject.Should().Be("StreamStarted");
     }
 }
