@@ -1,0 +1,25 @@
+{
+  "version": "2.0",
+  "logging": {
+    "applicationInsights": {
+      "samplingSettings": {
+        "isEnabled": true,
+        "excludedTypes": "Request"
+      }
+    },
+    "console": {
+      "FormatterName": "json",
+      "FormatterOptions": {
+        "TimestampFormat": "yyyy-MM-ddTHH:mm:ssZ",
+        "UseUtcTimestamp": true,
+        "IncludeScopes": true
+      }
+    }
+  },
+  "extensions": {
+    "serviceBus": {
+      "prefetchCount": 0,
+      "autoCompleteMessages": false
+    }
+  }
+}
