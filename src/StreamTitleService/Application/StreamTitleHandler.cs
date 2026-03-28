@@ -89,7 +89,9 @@ public class StreamTitleHandler : IStreamTitleHandler
         }
         catch (Exception ex)
         {
-            await PublishFailedAsync(evt, title.Value, platform.Value, ex.Message, 0, 0, ct);
+            var attempted = (ex as TitleUpdateException)?.ChannelsAttempted ?? 0;
+            var updated = (ex as TitleUpdateException)?.ChannelsUpdated ?? 0;
+            await PublishFailedAsync(evt, title.Value, platform.Value, ex.Message, updated, attempted, ct);
             await _alertNotifier.SendFailureAlertAsync(title.Value, ex.Message, ct);
             throw;
         }

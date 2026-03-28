@@ -8,6 +8,11 @@ namespace StreamTitleService.Infrastructure.Adapters;
 /// </summary>
 public class GoogleYouTubeServiceWrapper : IYouTubeServiceWrapper
 {
+    /// <summary>
+    /// YouTube category ID for "People and Blogs". Required when updating video snippets.
+    /// </summary>
+    private const string PeopleAndBlogsCategoryId = "22";
+
     private readonly YouTubeService _service;
 
     public GoogleYouTubeServiceWrapper(YouTubeService service)
@@ -72,7 +77,7 @@ public class GoogleYouTubeServiceWrapper : IYouTubeServiceWrapper
                 Description = description,
                 ChannelId = channelId,
                 Tags = tags,
-                CategoryId = "22" // People & Blogs (required by API, preserved from original)
+                CategoryId = PeopleAndBlogsCategoryId
             }
         };
 

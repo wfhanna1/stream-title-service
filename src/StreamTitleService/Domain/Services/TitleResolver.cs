@@ -1,14 +1,11 @@
+using StreamTitleService.Domain.Constants;
 using StreamTitleService.Domain.Events;
 using StreamTitleService.Domain.ValueObjects;
-using TimeZoneConverter;
 
 namespace StreamTitleService.Domain.Services;
 
 public class TitleResolver
 {
-    private static readonly TimeZoneInfo Eastern =
-        TZConvert.GetTimeZoneInfo("America/New_York");
-
     public StreamTitle Resolve(StreamStartedEvent evt)
     {
         var suffix = !string.IsNullOrWhiteSpace(evt.Data.Title)
@@ -20,7 +17,7 @@ public class TitleResolver
 
     private static string GenerateDefaultSuffix(DateTimeOffset timestamp)
     {
-        var eastern = TimeZoneInfo.ConvertTime(timestamp, Eastern);
+        var eastern = TimeZoneInfo.ConvertTime(timestamp, TimeZones.Eastern);
 
         var isSaturdayEvening =
             eastern.DayOfWeek == DayOfWeek.Saturday &&
