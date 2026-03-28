@@ -1,8 +1,9 @@
+using StreamTitleService.Application.Ports.Outbound;
 using StreamTitleService.Domain.ValueObjects;
 
 namespace StreamTitleService.Infrastructure.Configuration;
 
-public class LocationPlatformMapping
+public class LocationPlatformMapping : ILocationPlatformMapper
 {
     private static readonly Dictionary<string, TargetPlatform> Mapping = new(StringComparer.OrdinalIgnoreCase)
     {

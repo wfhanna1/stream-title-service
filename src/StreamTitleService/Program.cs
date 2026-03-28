@@ -22,7 +22,7 @@ var host = new HostBuilder()
         services.ConfigureFunctionsApplicationInsights();
 
         // Domain configuration
-        services.AddSingleton<LocationPlatformMapping>();
+        services.AddSingleton<ILocationPlatformMapper, LocationPlatformMapping>();
 
         // Restream credentials from Key Vault
         var keyVaultUri = Environment.GetEnvironmentVariable("KEY_VAULT_URI")
@@ -93,8 +93,9 @@ var host = new HostBuilder()
             ?? throw new InvalidOperationException("SERVICE_BUS_CONNECTION environment variable is not set");
 
         services.AddSingleton(new ServiceBusClient(serviceBusConnection));
+        var sbTopic = Environment.GetEnvironmentVariable("SERVICE_BUS_TOPIC") ?? "stream-title";
         services.AddSingleton(sp =>
-            sp.GetRequiredService<ServiceBusClient>().CreateSender("stream-title"));
+            sp.GetRequiredService<ServiceBusClient>().CreateSender(sbTopic));
 
         // ServiceBusEventPublisher (Singleton)
         services.AddSingleton<IEventPublisher>(sp =>
@@ -132,7 +133,7 @@ var host = new HostBuilder()
 
         services.AddSingleton<IStreamTitleHandler>(sp =>
         {
-            var locationMapping = sp.GetRequiredService<LocationPlatformMapping>();
+            var locationMapping = sp.GetRequiredService<ILocationPlatformMapper>();
             var clients = sp.GetRequiredService<IReadOnlyDictionary<TargetPlatform, ITitlePlatformClient>>();
             var eventPublisher = sp.GetRequiredService<IEventPublisher>();
             var alertNotifier = sp.GetRequiredService<IAlertNotifier>();

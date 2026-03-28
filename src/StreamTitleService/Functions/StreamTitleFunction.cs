@@ -23,8 +23,8 @@ public class StreamTitleFunction
     [Function(nameof(StreamTitleFunction))]
     public async Task RunAsync(
         [ServiceBusTrigger(
-            "stream-title",
-            "stream-title-service",
+            "%SERVICE_BUS_TOPIC%",
+            "%SERVICE_BUS_SUBSCRIPTION%",
             Connection = "SERVICE_BUS_CONNECTION")]
         ServiceBusReceivedMessage message,
         CancellationToken cancellationToken)

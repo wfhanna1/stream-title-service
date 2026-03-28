@@ -25,11 +25,11 @@ public class RestreamClient : ITitlePlatformClient
     public async Task<TitleUpdateResult> SetTitleAsync(string title, CancellationToken ct)
     {
         var token = await _tokenProvider.GetAccessTokenAsync(ct);
-        _httpClient.DefaultRequestHeaders.Authorization =
-            new AuthenticationHeaderValue("Bearer", token);
 
         // Get all channels
-        var response = await _httpClient.GetAsync("user/channel/all", ct);
+        var getRequest = new HttpRequestMessage(HttpMethod.Get, "user/channel/all");
+        getRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        var response = await _httpClient.SendAsync(getRequest, ct);
         response.EnsureSuccessStatusCode();
 
         var channels = await response.Content.ReadFromJsonAsync<JsonElement[]>(ct)
@@ -52,10 +52,10 @@ public class RestreamClient : ITitlePlatformClient
             var channelId = ch.GetProperty("id").ToString();
             var name = ch.TryGetProperty("displayName", out var dn) ? dn.GetString() : "unknown";
 
-            var patchResponse = await _httpClient.PatchAsJsonAsync(
-                $"user/channel-meta/{channelId}",
-                new { title },
-                ct);
+            var patchRequest = new HttpRequestMessage(HttpMethod.Patch, $"user/channel-meta/{channelId}");
+            patchRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            patchRequest.Content = JsonContent.Create(new { title });
+            var patchResponse = await _httpClient.SendAsync(patchRequest, ct);
 
             if (patchResponse.IsSuccessStatusCode)
             {

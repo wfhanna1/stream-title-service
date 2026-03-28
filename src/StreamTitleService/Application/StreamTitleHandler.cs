@@ -6,13 +6,12 @@ using StreamTitleService.Domain.Events;
 using StreamTitleService.Domain.Exceptions;
 using StreamTitleService.Domain.Services;
 using StreamTitleService.Domain.ValueObjects;
-using StreamTitleService.Infrastructure.Configuration;
 
 namespace StreamTitleService.Application;
 
 public class StreamTitleHandler : IStreamTitleHandler
 {
-    private readonly LocationPlatformMapping _locationMapping;
+    private readonly ILocationPlatformMapper _locationMapping;
     private readonly IReadOnlyDictionary<TargetPlatform, ITitlePlatformClient> _clients;
     private readonly IEventPublisher _eventPublisher;
     private readonly IAlertNotifier _alertNotifier;
@@ -21,7 +20,7 @@ public class StreamTitleHandler : IStreamTitleHandler
     private readonly ILogger<StreamTitleHandler>? _logger;
 
     public StreamTitleHandler(
-        LocationPlatformMapping locationMapping,
+        ILocationPlatformMapper locationMapping,
         IReadOnlyDictionary<TargetPlatform, ITitlePlatformClient> clients,
         IEventPublisher eventPublisher,
         IAlertNotifier alertNotifier,
