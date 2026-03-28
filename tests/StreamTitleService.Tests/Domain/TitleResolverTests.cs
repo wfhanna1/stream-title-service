@@ -117,4 +117,78 @@ public class TitleResolverTests
 
         result.Value.Should().Be("Saturday, March 28, 2026 - Feast of St. Mark");
     }
+
+    [Fact]
+    public void Resolve_WithEmptyStringTitle_ShouldUseDefault()
+    {
+        // Sunday morning -- empty title should trigger default "Divine Liturgy"
+        var evt = new StreamStartedEvent
+        {
+            EventType = "StreamStarted",
+            Source = "automated-obs-trigger",
+            Timestamp = new DateTimeOffset(2026, 3, 29, 15, 0, 0, TimeSpan.Zero), // Sunday 11 AM EDT
+            Location = "st. mary and st. joseph",
+            Data = new StreamStartedData { Title = "" }
+        };
+
+        var result = _resolver.Resolve(evt);
+
+        result.Value.Should().Be("Sunday, March 29, 2026 - Divine Liturgy");
+    }
+
+    [Fact]
+    public void Resolve_WithWhitespaceOnlyTitle_ShouldUseDefault()
+    {
+        // Sunday morning -- whitespace-only title should trigger default "Divine Liturgy"
+        var evt = new StreamStartedEvent
+        {
+            EventType = "StreamStarted",
+            Source = "automated-obs-trigger",
+            Timestamp = new DateTimeOffset(2026, 3, 29, 15, 0, 0, TimeSpan.Zero), // Sunday 11 AM EDT
+            Location = "st. mary and st. joseph",
+            Data = new StreamStartedData { Title = "   " }
+        };
+
+        var result = _resolver.Resolve(evt);
+
+        result.Value.Should().Be("Sunday, March 29, 2026 - Divine Liturgy");
+    }
+
+    [Fact]
+    public void Resolve_Saturday459PM_ShouldReturnDivineLiturgy()
+    {
+        // Saturday 4:59 PM EDT = 20:59 UTC -- just before the 5 PM Vespers cutoff
+        // eastern.Hour == 16, which is < 17, so returns "Divine Liturgy"
+        var evt = new StreamStartedEvent
+        {
+            EventType = "StreamStarted",
+            Source = "automated-obs-trigger",
+            Timestamp = new DateTimeOffset(2026, 3, 28, 20, 59, 0, TimeSpan.Zero),
+            Location = "virtual",
+            Data = new StreamStartedData()
+        };
+
+        var result = _resolver.Resolve(evt);
+
+        result.Value.Should().Contain("Divine Liturgy");
+    }
+
+    [Fact]
+    public void Resolve_Saturday500PM_ShouldReturnVespers()
+    {
+        // Saturday 5:00 PM EDT = 21:00 UTC -- exactly at the Vespers cutoff
+        // eastern.Hour == 17, which is >= 17, so returns "Vespers and Midnight Praises"
+        var evt = new StreamStartedEvent
+        {
+            EventType = "StreamStarted",
+            Source = "automated-obs-trigger",
+            Timestamp = new DateTimeOffset(2026, 3, 28, 21, 0, 0, TimeSpan.Zero),
+            Location = "virtual",
+            Data = new StreamStartedData()
+        };
+
+        var result = _resolver.Resolve(evt);
+
+        result.Value.Should().Contain("Vespers and Midnight Praises");
+    }
 }

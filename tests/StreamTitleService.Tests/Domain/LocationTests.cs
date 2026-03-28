@@ -52,4 +52,21 @@ public class LocationTests
         var b = new Location("Virtual");
         a.Should().Be(b);
     }
+
+    [Fact]
+    public void Create_WithLeadingTrailingWhitespace_ShouldThrow()
+    {
+        // The code does ToLowerInvariant() but does NOT trim, so " virtual " is not in KnownLocations
+        var act = () => new Location(" virtual ");
+        act.Should().Throw<UnknownLocationException>()
+            .Which.LocationValue.Should().Be(" virtual ");
+    }
+
+    [Fact]
+    public void Create_WithEmptyString_ShouldThrow()
+    {
+        var act = () => new Location("");
+        act.Should().Throw<UnknownLocationException>()
+            .Which.LocationValue.Should().Be("");
+    }
 }
