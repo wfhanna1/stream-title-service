@@ -126,23 +126,35 @@ public class StreamTitleFunctionTests
     }
 
     [Fact]
-    public async Task Run_WrongEventType_ShouldStillCallHandler()
+    public async Task Run_WrongEventType_ShouldSkipProcessing()
     {
-        // The function does not filter by eventType -- it passes all events to the handler.
-        // This test documents that current behavior. Filtering is a known review item.
         var json = """{"eventType":"StreamTitleSet","source":"stream-title-service","data":{"title":"Some Title"}}""";
         var message = CreateMessage(json);
-
-        _handler
-            .Setup(h => h.HandleAsync(It.IsAny<StreamStartedEvent>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
 
         var function = new StreamTitleFunction(_handler.Object);
         await function.RunAsync(message, CancellationToken.None);
 
         _handler.Verify(h => h.HandleAsync(
-            It.Is<StreamStartedEvent>(e => e.EventType == "StreamTitleSet"),
+            It.IsAny<StreamStartedEvent>(),
             It.IsAny<CancellationToken>()),
-            Times.Once);
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task Run_UnrecognizedSchemaVersion_ShouldThrow()
+    {
+        var json = """{"schemaVersion":"2","eventType":"StreamStarted","source":"test","data":{"title":"Some Title"}}""";
+        var message = CreateMessage(json);
+
+        var function = new StreamTitleFunction(_handler.Object);
+        var act = () => function.RunAsync(message, CancellationToken.None);
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*Unrecognized schema version*");
+
+        _handler.Verify(h => h.HandleAsync(
+            It.IsAny<StreamStartedEvent>(),
+            It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 }

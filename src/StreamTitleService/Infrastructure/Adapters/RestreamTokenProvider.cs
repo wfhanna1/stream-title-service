@@ -5,27 +5,27 @@ using StreamTitleService.Application.Ports.Outbound;
 
 namespace StreamTitleService.Infrastructure.Adapters;
 
-public class KeyVaultTokenProvider : ITokenProvider
+public class RestreamTokenProvider : ITokenProvider
 {
     private readonly HttpClient _httpClient;
     private readonly string _refreshToken;
     private readonly string _clientId;
     private readonly string _clientSecret;
-    private readonly ILogger<KeyVaultTokenProvider>? _logger;
+    private readonly ILogger<RestreamTokenProvider>? _logger;
 
     private readonly SemaphoreSlim _lock = new(1, 1);
-    private string? _cachedToken;
-    private DateTimeOffset _tokenExpiry = DateTimeOffset.MinValue;
+    private volatile string? _cachedAccessToken;
+    private long _expiresAtTicks = DateTimeOffset.MinValue.UtcTicks;
 
     private const int ExpiryBufferSeconds = 60;
     private const string TokenEndpoint = "https://api.restream.io/oauth/token";
 
-    public KeyVaultTokenProvider(
+    public RestreamTokenProvider(
         HttpClient httpClient,
         string refreshToken,
         string clientId,
         string clientSecret,
-        ILogger<KeyVaultTokenProvider>? logger = null)
+        ILogger<RestreamTokenProvider>? logger = null)
     {
         _httpClient = httpClient;
         _refreshToken = refreshToken;
@@ -37,15 +37,16 @@ public class KeyVaultTokenProvider : ITokenProvider
     public async Task<string> GetAccessTokenAsync(CancellationToken ct)
     {
         // Fast path: return cached token if still valid
-        if (_cachedToken is not null && DateTimeOffset.UtcNow < _tokenExpiry)
-            return _cachedToken;
+        var cachedToken = _cachedAccessToken;
+        if (cachedToken is not null && DateTimeOffset.UtcNow.UtcTicks < Volatile.Read(ref _expiresAtTicks))
+            return cachedToken;
 
         await _lock.WaitAsync(ct);
         try
         {
             // Double-check inside the lock
-            if (_cachedToken is not null && DateTimeOffset.UtcNow < _tokenExpiry)
-                return _cachedToken;
+            if (_cachedAccessToken is not null && DateTimeOffset.UtcNow.UtcTicks < Volatile.Read(ref _expiresAtTicks))
+                return _cachedAccessToken;
 
             _logger?.LogInformation("Refreshing Restream access token");
 
@@ -64,12 +65,12 @@ public class KeyVaultTokenProvider : ITokenProvider
             var tokenResponse = JsonSerializer.Deserialize<TokenResponse>(json)
                 ?? throw new InvalidOperationException("Failed to deserialize token response");
 
-            _cachedToken = tokenResponse.AccessToken;
-            _tokenExpiry = DateTimeOffset.UtcNow.AddSeconds(tokenResponse.ExpiresIn - ExpiryBufferSeconds);
+            Volatile.Write(ref _expiresAtTicks, DateTimeOffset.UtcNow.AddSeconds(tokenResponse.ExpiresIn - ExpiryBufferSeconds).UtcTicks);
+            _cachedAccessToken = tokenResponse.AccessToken;
 
             _logger?.LogInformation("Restream token refreshed, expires in {ExpiresIn}s", tokenResponse.ExpiresIn);
 
-            return _cachedToken;
+            return _cachedAccessToken;
         }
         finally
         {

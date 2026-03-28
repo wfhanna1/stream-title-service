@@ -4,6 +4,9 @@ namespace StreamTitleService.Domain.Events;
 
 public class StreamStartedEvent
 {
+    [JsonPropertyName("schemaVersion")]
+    public string? SchemaVersion { get; set; }
+
     [JsonPropertyName("eventType")]
     public string EventType { get; set; } = "";
 

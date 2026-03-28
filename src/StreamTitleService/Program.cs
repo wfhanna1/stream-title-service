@@ -2,9 +2,11 @@ using Azure.Communication.Email;
 using Azure.Identity;
 using Azure.Messaging.ServiceBus;
 using Azure.Security.KeyVault.Secrets;
+using Azure.Storage.Blobs;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Polly;
 using Polly.Extensions.Http;
 using StreamTitleService.Application;
@@ -35,16 +37,16 @@ var host = new HostBuilder()
         var clientId = kvClient.GetSecret("restream-client-id").Value.Value;
         var clientSecret = kvClient.GetSecret("restream-client-secret").Value.Value;
 
-        // HttpClient for KeyVaultTokenProvider (token refresh calls)
+        // HttpClient for RestreamTokenProvider (token refresh calls)
         services.AddHttpClient("TokenClient");
 
-        // Register KeyVaultTokenProvider (Singleton) with Key Vault credentials
+        // Register RestreamTokenProvider (Singleton) with Key Vault credentials
         services.AddSingleton<ITokenProvider>(sp =>
         {
             var httpClientFactory = sp.GetRequiredService<IHttpClientFactory>();
             var httpClient = httpClientFactory.CreateClient("TokenClient");
-            var logger = sp.GetService<Microsoft.Extensions.Logging.ILogger<KeyVaultTokenProvider>>();
-            return new KeyVaultTokenProvider(httpClient, refreshToken, clientId, clientSecret, logger);
+            var logger = sp.GetService<Microsoft.Extensions.Logging.ILogger<RestreamTokenProvider>>();
+            return new RestreamTokenProvider(httpClient, refreshToken, clientId, clientSecret, logger);
         });
 
         // HttpClient for RestreamClient with Polly resilience
@@ -66,16 +68,22 @@ var host = new HostBuilder()
             return new RestreamClient(httpClient, tokenProvider, logger);
         });
 
-        // YouTubeClient -- registered as a stub (no Blob credentials wired here)
-        // Wire fully when YouTube credentials are available in blob storage
+        // YouTubeClient -- wire real implementation when BLOB_STORAGE_CONNECTION is set
+        var blobStorageConnection = Environment.GetEnvironmentVariable("BLOB_STORAGE_CONNECTION");
         services.AddSingleton<YouTubeClient>(sp =>
         {
             var logger = sp.GetService<Microsoft.Extensions.Logging.ILogger<YouTubeClient>>();
-            // Stub: IYouTubeServiceWrapper is not registered; YouTube path requires blob credentials
-            // This will throw if the YouTube platform is actually invoked without credentials
-            return new YouTubeClient(
-                new NullYouTubeServiceWrapper(),
-                logger);
+            if (!string.IsNullOrEmpty(blobStorageConnection))
+            {
+                var blobClient = new BlobClient(blobStorageConnection, "youtube-tokens", "token.json");
+                var tokenProviderLogger = sp.GetService<Microsoft.Extensions.Logging.ILogger<BlobStorageYouTubeTokenProvider>>();
+                var youTubeTokenProvider = new BlobStorageYouTubeTokenProvider(blobClient, tokenProviderLogger);
+                var youTubeService = youTubeTokenProvider.CreateYouTubeServiceAsync(CancellationToken.None).GetAwaiter().GetResult();
+                return new YouTubeClient(new GoogleYouTubeServiceWrapper(youTubeService), logger);
+            }
+
+            logger?.LogWarning("BLOB_STORAGE_CONNECTION is not set. YouTube path will throw if invoked.");
+            return new YouTubeClient(new NullYouTubeServiceWrapper(), logger);
         });
 
         // Platform client dictionary routing TargetPlatform -> ITitlePlatformClient

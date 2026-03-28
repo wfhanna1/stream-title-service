@@ -8,15 +8,15 @@ using Xunit;
 
 namespace StreamTitleService.Tests.Infrastructure;
 
-public class KeyVaultTokenProviderTests
+public class RestreamTokenProviderTests
 {
     private readonly Mock<HttpMessageHandler> _httpHandler = new();
 
-    private KeyVaultTokenProvider CreateProvider(string refreshToken = "refresh-token",
+    private RestreamTokenProvider CreateProvider(string refreshToken = "refresh-token",
         string clientId = "client-id", string clientSecret = "client-secret")
     {
         var httpClient = new HttpClient(_httpHandler.Object);
-        return new KeyVaultTokenProvider(httpClient, refreshToken, clientId, clientSecret);
+        return new RestreamTokenProvider(httpClient, refreshToken, clientId, clientSecret);
     }
 
     private void SetupTokenResponse(string accessToken, int expiresIn = 3600)
