@@ -134,7 +134,6 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
           value: 'DefaultEndpointsProtocol=https;AccountName=${storageAccount.name};EndpointSuffix=${environment().suffixes.storage};AccountKey=${storageAccount.listKeys().keys[0].value}'
         }
       ]
-      linuxFxVersion: 'DOTNET-ISOLATED|9.0'
     }
     functionAppConfig: {
       deployment: {
