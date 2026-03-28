@@ -214,4 +214,137 @@ public class StreamTitleHandlerComponentTests
         _eventPublisher.TitleFailedEvents.Should().BeEmpty();
         _alertNotifier.Alerts.Should().BeEmpty();
     }
+
+    // ------------------------------------------------------------------
+    // Scenario 5: No title, Saturday 7 PM EDT -> Vespers and Midnight Praises.
+    // 2026-03-28 is a Saturday. 23:00 UTC = 19:00 EDT (UTC-4).
+    // ------------------------------------------------------------------
+    [Fact]
+    public async Task DefaultTitle_SaturdayEvening_ProducesVespersTitle()
+    {
+        var timestamp = new DateTimeOffset(2026, 3, 28, 23, 0, 0, TimeSpan.Zero);
+        var evt = CreateEvent("virtual", null, timestamp);
+
+        _restreamFake.ResultToReturn = new TitleUpdateResult(2, 0);
+
+        await _handler.HandleAsync(evt, CancellationToken.None);
+
+        _restreamFake.TitlesReceived.Should().ContainSingle();
+        var sentTitle = _restreamFake.TitlesReceived[0];
+        sentTitle.Should().Be("Saturday, March 28, 2026 - Vespers and Midnight Praises");
+
+        _eventPublisher.TitleSetEvents.Should().ContainSingle();
+        var published = _eventPublisher.TitleSetEvents[0];
+        published.Data.Title.Should().Be(sentTitle);
+        published.Data.TargetPlatform.Should().Be("restream");
+
+        _youtubeFake.TitlesReceived.Should().BeEmpty();
+        _eventPublisher.TitleFailedEvents.Should().BeEmpty();
+        _alertNotifier.Alerts.Should().BeEmpty();
+    }
+
+    // ------------------------------------------------------------------
+    // Scenario 6: location "st. anthony chapel" routes to YouTube client.
+    // ------------------------------------------------------------------
+    [Fact]
+    public async Task YouTubePath_StAnthonyChapel_RoutesToYouTubeClient()
+    {
+        var timestamp = DateTimeOffset.UtcNow;
+        var evt = CreateEvent("st. anthony chapel", "Sunday Liturgy", timestamp);
+
+        _youtubeFake.ResultToReturn = new TitleUpdateResult(1, 0);
+
+        await _handler.HandleAsync(evt, CancellationToken.None);
+
+        _youtubeFake.TitlesReceived.Should().ContainSingle();
+        _youtubeFake.TitlesReceived[0].Should().Contain("Sunday Liturgy");
+
+        // Restream client must not have been called.
+        _restreamFake.TitlesReceived.Should().BeEmpty();
+
+        _eventPublisher.TitleSetEvents.Should().ContainSingle();
+        var published = _eventPublisher.TitleSetEvents[0];
+        published.Data.TargetPlatform.Should().Be("youtube");
+        published.Location.Should().Be("st. anthony chapel");
+
+        _eventPublisher.TitleFailedEvents.Should().BeEmpty();
+        _alertNotifier.Alerts.Should().BeEmpty();
+    }
+
+    // ------------------------------------------------------------------
+    // Scenario 7: Unknown location "holy cross" -> throws, publishes
+    //             StreamTitleFailedEvent, sends alert.
+    // ------------------------------------------------------------------
+    [Fact]
+    public async Task UnknownLocation_ThroughFullPipeline_PublishesFailedAndAlerts()
+    {
+        var timestamp = DateTimeOffset.UtcNow;
+        var evt = CreateEvent("holy cross", "Some Title", timestamp);
+
+        var act = () => _handler.HandleAsync(evt, CancellationToken.None);
+        await act.Should().ThrowAsync<Exception>();
+
+        _eventPublisher.TitleFailedEvents.Should().ContainSingle();
+        var failedEvt = _eventPublisher.TitleFailedEvents[0];
+        failedEvt.Location.Should().Be("holy cross");
+
+        _alertNotifier.Alerts.Should().ContainSingle();
+
+        // No success events, no platform client calls.
+        _eventPublisher.TitleSetEvents.Should().BeEmpty();
+        _restreamFake.TitlesReceived.Should().BeEmpty();
+        _youtubeFake.TitlesReceived.Should().BeEmpty();
+    }
+
+    // ------------------------------------------------------------------
+    // Scenario 8: Title already has a date prefix for a different date.
+    //             The old prefix must be stripped and replaced with the
+    //             date derived from the event timestamp (March 29, 2026).
+    // ------------------------------------------------------------------
+    [Fact]
+    public async Task DatePrefixStripping_ExistingDateInTitle()
+    {
+        // 2026-03-29 13:00 UTC = Sunday, March 29, 2026 09:00 Eastern.
+        var timestamp = new DateTimeOffset(2026, 3, 29, 13, 0, 0, TimeSpan.Zero);
+        var evt = CreateEvent("virtual", "Sunday, March 22, 2026 - Old Liturgy", timestamp);
+
+        _restreamFake.ResultToReturn = new TitleUpdateResult(1, 0);
+
+        await _handler.HandleAsync(evt, CancellationToken.None);
+
+        _restreamFake.TitlesReceived.Should().ContainSingle();
+        var sentTitle = _restreamFake.TitlesReceived[0];
+        // Old date prefix stripped; new prefix from event timestamp applied.
+        sentTitle.Should().Be("Sunday, March 29, 2026 - Old Liturgy");
+
+        _eventPublisher.TitleSetEvents.Should().ContainSingle();
+        _eventPublisher.TitleSetEvents[0].Data.Title.Should().Be(sentTitle);
+
+        _eventPublisher.TitleFailedEvents.Should().BeEmpty();
+        _alertNotifier.Alerts.Should().BeEmpty();
+    }
+
+    // ------------------------------------------------------------------
+    // Scenario 9: Platform client returns partial failure (2 updated,
+    //             1 failed). StreamTitleSetEvent must reflect those counts.
+    // ------------------------------------------------------------------
+    [Fact]
+    public async Task PartialPlatformFailure_StillPublishesResult()
+    {
+        var timestamp = DateTimeOffset.UtcNow;
+        var evt = CreateEvent("virtual", "Partial Update Stream", timestamp);
+
+        _restreamFake.ResultToReturn = new TitleUpdateResult(2, 1);
+
+        await _handler.HandleAsync(evt, CancellationToken.None);
+
+        _eventPublisher.TitleSetEvents.Should().ContainSingle();
+        var published = _eventPublisher.TitleSetEvents[0];
+        published.Data.ChannelsUpdated.Should().Be(2);
+        published.Data.ChannelsFailed.Should().Be(1);
+        published.Data.TargetPlatform.Should().Be("restream");
+
+        _eventPublisher.TitleFailedEvents.Should().BeEmpty();
+        _alertNotifier.Alerts.Should().BeEmpty();
+    }
 }
