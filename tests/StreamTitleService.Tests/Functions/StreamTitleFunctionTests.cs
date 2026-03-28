@@ -184,4 +184,28 @@ public class StreamTitleFunctionTests
         var act = () => function.Run(json);
         await act.Should().ThrowAsync<ArgumentException>().WithMessage("*Location*");
     }
+
+    // Fix #8: schema version validation -- explicit v1 and null (implicit v1) should both process
+    [Fact]
+    public async Task Run_SchemaVersion1_ShouldProcess()
+    {
+        var json = """{"eventType":"StreamStarted","source":"test","timestamp":"2026-03-27T12:00:00Z","location":"virtual","schemaVersion":"1","data":{"title":"Test"}}""";
+        _handler.Setup(h => h.HandleAsync(It.IsAny<StreamStartedEvent>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        var function = new StreamTitleFunction(_handler.Object, _logger.Object);
+        await function.Run(json);
+        _handler.Verify(h => h.HandleAsync(It.IsAny<StreamStartedEvent>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Run_NullSchemaVersion_ShouldProcess()
+    {
+        // v1 is implicit (no field present)
+        var json = """{"eventType":"StreamStarted","source":"test","timestamp":"2026-03-27T12:00:00Z","location":"virtual","data":{"title":"Test"}}""";
+        _handler.Setup(h => h.HandleAsync(It.IsAny<StreamStartedEvent>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        var function = new StreamTitleFunction(_handler.Object, _logger.Object);
+        await function.Run(json);
+        _handler.Verify(h => h.HandleAsync(It.IsAny<StreamStartedEvent>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
 }

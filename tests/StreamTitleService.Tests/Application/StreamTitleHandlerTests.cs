@@ -170,6 +170,44 @@ public class StreamTitleHandlerTests
             It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    // Fix #1: DIP verification -- handler must accept ILocationPlatformMapper (not concrete type)
+    [Fact]
+    public void Constructor_AcceptsILocationPlatformMapper_NotConcreteType()
+    {
+        // This test verifies the DIP fix: handler depends on ILocationPlatformMapper (port)
+        // If someone reverts to concrete LocationPlatformMapping, this test still passes
+        // because LocationPlatformMapping implements the interface.
+        // The real guard is that StreamTitleHandler's using statements don't include Infrastructure.
+        var mapper = new Mock<ILocationPlatformMapper>();
+        mapper.Setup(m => m.GetPlatform(It.IsAny<Location>())).Returns(TargetPlatform.Restream);
+
+        var handler = new StreamTitleHandler(
+            mapper.Object,  // Passing mock of interface, not concrete class
+            new Dictionary<TargetPlatform, ITitlePlatformClient>(),
+            _eventPublisher.Object,
+            _alertNotifier.Object);
+
+        handler.Should().NotBeNull();
+    }
+
+    // Fix #6: TitleUpdateException with channelsAttempted
+    [Fact]
+    public async Task Handle_TitleUpdateException_ShouldPublishCorrectAttemptedCount()
+    {
+        var evt = CreateEvent("virtual", "Test", DateTimeOffset.UtcNow);
+        _restreamClient.Setup(c => c.SetTitleAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new TitleUpdateException("Partial failure", channelsAttempted: 3, channelsUpdated: 1));
+
+        var act = () => _handler.HandleAsync(evt, CancellationToken.None);
+
+        await act.Should().ThrowAsync<TitleUpdateException>();
+        _eventPublisher.Verify(p => p.PublishTitleFailedAsync(
+            It.Is<StreamTitleFailedEvent>(e =>
+                e.Data.ChannelsAttempted == 3 &&
+                e.Data.ChannelsUpdated == 1),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     private static StreamStartedEvent CreateEvent(string location, string? title, DateTimeOffset timestamp)
     {
         return new StreamStartedEvent

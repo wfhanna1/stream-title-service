@@ -191,4 +191,26 @@ public class TitleResolverTests
 
         result.Value.Should().Contain("Vespers and Midnight Praises");
     }
+
+    // Fix #17: shared timezone constant -- TitleResolver and StreamTitle.Format both use TimeZones.Eastern
+    [Fact]
+    public void Resolve_ShouldUseSharedEasternTimezone()
+    {
+        // Both TitleResolver and StreamTitle.Format should produce consistent results
+        // because they share TimeZones.Eastern
+        var evt = new StreamStartedEvent
+        {
+            EventType = "StreamStarted",
+            Source = "test",
+            // 2026-03-28 03:30 UTC = 2026-03-27 11:30 PM EDT (Friday)
+            Timestamp = new DateTimeOffset(2026, 3, 28, 3, 30, 0, TimeSpan.Zero),
+            Location = "virtual",
+            Data = new StreamStartedData()
+        };
+
+        var result = _resolver.Resolve(evt);
+        // Both the date prefix (from StreamTitle.Format) and the day-of-week check
+        // (from TitleResolver's DefaultTitleGenerator) should agree it's Friday
+        result.Value.Should().StartWith("Friday, March 27, 2026");
+    }
 }

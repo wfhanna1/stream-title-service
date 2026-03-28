@@ -13,18 +13,19 @@ public class RestreamClientTests
 {
     private readonly Mock<ITokenProvider> _tokenProvider = new();
     private readonly Mock<HttpMessageHandler> _httpHandler = new();
+    private HttpClient _httpClient = null!;
 
     private RestreamClient CreateClient()
     {
         _tokenProvider.Setup(t => t.GetAccessTokenAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync("test-access-token");
 
-        var httpClient = new HttpClient(_httpHandler.Object)
+        _httpClient = new HttpClient(_httpHandler.Object)
         {
             BaseAddress = new Uri("https://api.restream.io/v2/")
         };
 
-        return new RestreamClient(httpClient, _tokenProvider.Object);
+        return new RestreamClient(_httpClient, _tokenProvider.Object);
     }
 
     [Fact]
@@ -214,5 +215,20 @@ public class RestreamClientTests
                 ItExpr.Is<HttpRequestMessage>(r => r.Method == HttpMethod.Patch),
                 ItExpr.IsAny<CancellationToken>())
             .ReturnsAsync(new HttpResponseMessage(status));
+    }
+
+    // Fix #2: per-request headers instead of DefaultRequestHeaders (thread-safe)
+    [Fact]
+    public async Task SetTitle_ShouldNotMutateDefaultRequestHeaders()
+    {
+        // Verifies fix #2: per-request headers instead of DefaultRequestHeaders
+        SetupGetChannels(new[] { new { id = "ch1", displayName = "YT", enabled = true, streamingPlatformId = 5 } });
+        SetupPatchChannel(HttpStatusCode.OK);
+
+        var client = CreateClient();
+        await client.SetTitleAsync("Test", CancellationToken.None);
+
+        // DefaultRequestHeaders should NOT have Authorization set
+        _httpClient.DefaultRequestHeaders.Authorization.Should().BeNull();
     }
 }
