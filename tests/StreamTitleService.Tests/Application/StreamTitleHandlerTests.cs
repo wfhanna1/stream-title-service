@@ -90,8 +90,68 @@ public class StreamTitleHandlerTests
         var act = () => _handler.HandleAsync(evt, CancellationToken.None);
 
         await act.Should().ThrowAsync<UnknownLocationException>();
+        _eventPublisher.Verify(p => p.PublishTitleFailedAsync(
+            It.IsAny<StreamTitleFailedEvent>(), It.IsAny<CancellationToken>()), Times.Once);
         _alertNotifier.Verify(a => a.SendFailureAlertAsync(
             It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Handle_AtExactStalenessThreshold_ShouldProcess()
+    {
+        // 89s old -- the code uses > (not >=), so anything at or below the threshold should be processed.
+        // Using 89s avoids a race condition where execution time tips a 90s timestamp over the boundary.
+        var evt = CreateEvent("virtual", "Test Title", DateTimeOffset.UtcNow.AddSeconds(-89));
+        _restreamClient.Setup(c => c.SetTitleAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TitleUpdateResult(1, 0));
+
+        await _handler.HandleAsync(evt, CancellationToken.None);
+
+        _restreamClient.Verify(c => c.SetTitleAsync(
+            It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Handle_PartialSuccess_ShouldPublishWithCorrectCounts()
+    {
+        var evt = CreateEvent("virtual", "Arabic Bible Study", DateTimeOffset.UtcNow);
+        _restreamClient.Setup(c => c.SetTitleAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TitleUpdateResult(2, 1));
+
+        await _handler.HandleAsync(evt, CancellationToken.None);
+
+        _eventPublisher.Verify(p => p.PublishTitleSetAsync(
+            It.Is<StreamTitleSetEvent>(e =>
+                e.Data.ChannelsUpdated == 2 && e.Data.ChannelsFailed == 1),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Handle_PublishSuccessEventFails_ShouldStillSucceed()
+    {
+        var evt = CreateEvent("virtual", "Arabic Bible Study", DateTimeOffset.UtcNow);
+        _restreamClient.Setup(c => c.SetTitleAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TitleUpdateResult(1, 0));
+        _eventPublisher.Setup(p => p.PublishTitleSetAsync(It.IsAny<StreamTitleSetEvent>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new Exception("Service Bus unavailable"));
+
+        // Should not throw -- the title was set, publish failure is non-fatal
+        var act = () => _handler.HandleAsync(evt, CancellationToken.None);
+
+        await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task Handle_AlertNotifierFailsOnUnknownLocation_ShouldStillThrowOriginalException()
+    {
+        var evt = CreateEvent("unknown-place", null, DateTimeOffset.UtcNow);
+        _alertNotifier.Setup(a => a.SendFailureAlertAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new Exception("Alert service down"));
+
+        var act = () => _handler.HandleAsync(evt, CancellationToken.None);
+
+        await act.Should().ThrowAsync<UnknownLocationException>();
     }
 
     [Fact]

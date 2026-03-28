@@ -55,8 +55,16 @@ public class StreamTitleHandler : IStreamTitleHandler
         }
         catch (UnknownLocationException ex)
         {
-            await _alertNotifier.SendFailureAlertAsync(
-                evt.Data.Title ?? "(default)", ex.Message, ct);
+            await PublishFailedAsync(evt, evt.Data.Title ?? "(default)", "unknown", ex.Message, 0, 0, ct);
+            try
+            {
+                await _alertNotifier.SendFailureAlertAsync(
+                    evt.Data.Title ?? "(default)", ex.Message, ct);
+            }
+            catch (Exception alertEx)
+            {
+                _logger?.LogError(alertEx, "Failed to send alert for unknown location");
+            }
             throw;
         }
 
@@ -75,10 +83,20 @@ public class StreamTitleHandler : IStreamTitleHandler
         }
 
         // Set title on platform
+        TitleUpdateResult result;
         try
         {
-            var result = await client.SetTitleAsync(title.Value, ct);
+            result = await client.SetTitleAsync(title.Value, ct);
+        }
+        catch (Exception ex)
+        {
+            await PublishFailedAsync(evt, title.Value, platform.Value, ex.Message, 0, 0, ct);
+            await _alertNotifier.SendFailureAlertAsync(title.Value, ex.Message, ct);
+            throw;
+        }
 
+        try
+        {
             await _eventPublisher.PublishTitleSetAsync(new StreamTitleSetEvent
             {
                 Timestamp = DateTimeOffset.UtcNow,
@@ -94,16 +112,14 @@ public class StreamTitleHandler : IStreamTitleHandler
                     ChannelsFailed = result.ChannelsFailed
                 }
             }, ct);
-
-            _logger?.LogInformation("Title set: '{Title}' on {Platform} ({Updated} channels)",
-                title.Value, platform.Value, result.ChannelsUpdated);
         }
-        catch (Exception ex)
+        catch (Exception pubEx)
         {
-            await PublishFailedAsync(evt, title.Value, platform.Value, ex.Message, 0, 0, ct);
-            await _alertNotifier.SendFailureAlertAsync(title.Value, ex.Message, ct);
-            throw;
+            _logger?.LogError(pubEx, "Failed to publish StreamTitleSet event");
         }
+
+        _logger?.LogInformation("Title set: '{Title}' on {Platform} ({Updated} channels)",
+            title.Value, platform.Value, result.ChannelsUpdated);
     }
 
     private async Task PublishFailedAsync(
