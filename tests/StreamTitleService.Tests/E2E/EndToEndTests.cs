@@ -119,7 +119,7 @@ public class EndToEndTests : IAsyncDisposable
         // 2. Send a StreamStarted event with a known title.
         var sentEvent = new StreamStartedEvent
         {
-            SchemaVersion = "1.0",
+            SchemaVersion = "1",
             EventType = "StreamStarted",
             Source = "e2e-test",
             Timestamp = DateTimeOffset.UtcNow,
@@ -179,7 +179,7 @@ public class EndToEndTests : IAsyncDisposable
         // 2. Send a StreamStarted event with an unknown location.
         var sentEvent = new StreamStartedEvent
         {
-            SchemaVersion = "1.0",
+            SchemaVersion = "1",
             EventType = "StreamStarted",
             Source = "e2e-test",
             Timestamp = DateTimeOffset.UtcNow,

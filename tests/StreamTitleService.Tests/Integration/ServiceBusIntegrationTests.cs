@@ -154,7 +154,7 @@ public class ServiceBusIntegrationTests : IAsyncDisposable
 
         var sentEvent = new StreamStartedEvent
         {
-            SchemaVersion = "1.0",
+            SchemaVersion = "1",
             EventType = "StreamStarted",
             Source = "integration-test",
             Timestamp = new DateTimeOffset(2026, 3, 27, 18, 0, 0, TimeSpan.Zero),
@@ -186,7 +186,7 @@ public class ServiceBusIntegrationTests : IAsyncDisposable
         deserialized!.EventType.Should().Be("StreamStarted");
         deserialized.Source.Should().Be("integration-test");
         deserialized.Location.Should().Be("st. mary and st. joseph");
-        deserialized.SchemaVersion.Should().Be("1.0");
+        deserialized.SchemaVersion.Should().Be("1");
         deserialized.TraceId.Should().Be("trace-abc123");
         deserialized.Data.Title.Should().Be("Friday, March 27, 2026 - Vespers");
         deserialized.Timestamp.Should().Be(sentEvent.Timestamp);
