@@ -84,7 +84,8 @@ var host = new HostBuilder()
             {
                 var wrapper = new LazyYouTubeServiceWrapper(async () =>
                 {
-                    var blobClient = new BlobClient(blobStorageConnection, "youtube-tokens", "token.json");
+                    var ytBlobName = Environment.GetEnvironmentVariable("YOUTUBE_TOKEN_BLOB_NAME") ?? "st-anthony-token.json";
+                    var blobClient = new BlobClient(blobStorageConnection, "youtube-tokens", ytBlobName);
                     var tokenProviderLogger = sp.GetService<Microsoft.Extensions.Logging.ILogger<BlobStorageYouTubeTokenProvider>>();
                     var youTubeTokenProvider = new BlobStorageYouTubeTokenProvider(blobClient, tokenProviderLogger);
                     var youTubeService = await youTubeTokenProvider.CreateYouTubeServiceAsync(CancellationToken.None);
