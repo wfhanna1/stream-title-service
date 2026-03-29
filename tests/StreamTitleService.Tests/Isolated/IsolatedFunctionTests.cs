@@ -3,7 +3,6 @@ using Microsoft.Extensions.Logging;
 using Moq;
 using StreamTitleService.Application;
 using StreamTitleService.Application.Ports.Outbound;
-using StreamTitleService.Domain.Events;
 using StreamTitleService.Domain.ValueObjects;
 using StreamTitleService.Functions;
 using StreamTitleService.Infrastructure.Configuration;
@@ -37,24 +36,6 @@ internal sealed class FakeIsolatedTitlePlatformClient : ITitlePlatformClient
     }
 }
 
-internal sealed class FakeIsolatedEventPublisher : IEventPublisher
-{
-    public List<StreamTitleSetEvent> TitleSetEvents { get; } = new();
-    public List<StreamTitleFailedEvent> TitleFailedEvents { get; } = new();
-
-    public Task PublishTitleSetAsync(StreamTitleSetEvent evt, CancellationToken ct)
-    {
-        TitleSetEvents.Add(evt);
-        return Task.CompletedTask;
-    }
-
-    public Task PublishTitleFailedAsync(StreamTitleFailedEvent evt, CancellationToken ct)
-    {
-        TitleFailedEvents.Add(evt);
-        return Task.CompletedTask;
-    }
-}
-
 internal sealed class FakeIsolatedAlertNotifier : IAlertNotifier
 {
     public List<(string Title, string Error)> Alerts { get; } = new();
@@ -75,7 +56,6 @@ public class IsolatedFunctionTests
 {
     private readonly FakeIsolatedTitlePlatformClient _restreamFake = new();
     private readonly FakeIsolatedTitlePlatformClient _youtubeFake = new();
-    private readonly FakeIsolatedEventPublisher _publisherFake = new();
     private readonly FakeIsolatedAlertNotifier _alertFake = new();
     private readonly StreamTitleFunction _function;
 
@@ -89,7 +69,7 @@ public class IsolatedFunctionTests
             [TargetPlatform.YouTube] = _youtubeFake
         };
 
-        var handler = new StreamTitleHandler(mapping, clients, _publisherFake, _alertFake);
+        var handler = new StreamTitleHandler(mapping, clients, _alertFake);
         var logger = new Mock<ILogger<StreamTitleFunction>>();
         _function = new StreamTitleFunction(handler, logger.Object);
     }
@@ -97,7 +77,7 @@ public class IsolatedFunctionTests
     // ------------------------------------------------------------------
     // Test 1: Full pipeline - Restream path from raw JSON
     // Location "virtual" maps to Restream. Use a fresh timestamp so the
-    // staleness check passes; verify the formatted title and published event.
+    // staleness check passes; verify the formatted title was set.
     // ------------------------------------------------------------------
     [Fact]
     public async Task FullPipeline_RestreamPath_FromRawJson()
@@ -120,13 +100,7 @@ public class IsolatedFunctionTests
         sentTitle.Should().Contain("Arabic Bible Study");
         sentTitle.Should().MatchRegex(@"^(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday),\s+\w+\s+\d{1,2},\s+\d{4}\s+-\s+Arabic Bible Study$");
 
-        _publisherFake.TitleSetEvents.Should().ContainSingle();
-        var published = _publisherFake.TitleSetEvents[0];
-        published.Data.Title.Should().Be(sentTitle);
-        published.Data.TargetPlatform.Should().Be("restream");
-
         _youtubeFake.TitlesReceived.Should().BeEmpty();
-        _publisherFake.TitleFailedEvents.Should().BeEmpty();
         _alertFake.Alerts.Should().BeEmpty();
     }
 
@@ -154,11 +128,6 @@ public class IsolatedFunctionTests
         _youtubeFake.TitlesReceived[0].Should().Contain("Test");
 
         _restreamFake.TitlesReceived.Should().BeEmpty();
-
-        _publisherFake.TitleSetEvents.Should().ContainSingle();
-        _publisherFake.TitleSetEvents[0].Data.TargetPlatform.Should().Be("youtube");
-
-        _publisherFake.TitleFailedEvents.Should().BeEmpty();
         _alertFake.Alerts.Should().BeEmpty();
     }
 
@@ -186,8 +155,6 @@ public class IsolatedFunctionTests
         var sentTitle = _restreamFake.TitlesReceived[0];
         sentTitle.Should().Contain("Divine Liturgy");
 
-        _publisherFake.TitleSetEvents.Should().ContainSingle();
-        _publisherFake.TitleFailedEvents.Should().BeEmpty();
         _alertFake.Alerts.Should().BeEmpty();
     }
 
@@ -214,7 +181,6 @@ public class IsolatedFunctionTests
 
         _restreamFake.TitlesReceived.Should().BeEmpty();
         _youtubeFake.TitlesReceived.Should().BeEmpty();
-        _publisherFake.TitleSetEvents.Should().BeEmpty();
     }
 
     // ------------------------------------------------------------------
@@ -238,8 +204,6 @@ public class IsolatedFunctionTests
         // Function returns early without calling handler, so no platform calls.
         _restreamFake.TitlesReceived.Should().BeEmpty();
         _youtubeFake.TitlesReceived.Should().BeEmpty();
-        _publisherFake.TitleSetEvents.Should().BeEmpty();
-        _publisherFake.TitleFailedEvents.Should().BeEmpty();
     }
 
     // ------------------------------------------------------------------
@@ -301,8 +265,6 @@ public class IsolatedFunctionTests
         _restreamFake.TitlesReceived[0].Should().Contain("Event 1");
         _restreamFake.TitlesReceived[1].Should().Contain("Event 2");
 
-        _publisherFake.TitleSetEvents.Should().HaveCount(2);
-        _publisherFake.TitleFailedEvents.Should().BeEmpty();
         _alertFake.Alerts.Should().BeEmpty();
         _youtubeFake.TitlesReceived.Should().BeEmpty();
     }
@@ -330,8 +292,6 @@ public class IsolatedFunctionTests
         var sentTitle = _restreamFake.TitlesReceived[0];
         sentTitle.Should().Contain("Divine Liturgy");
 
-        _publisherFake.TitleSetEvents.Should().ContainSingle();
-        _publisherFake.TitleFailedEvents.Should().BeEmpty();
         _alertFake.Alerts.Should().BeEmpty();
     }
 
@@ -357,13 +317,11 @@ public class IsolatedFunctionTests
 
         _restreamFake.TitlesReceived.Should().BeEmpty();
         _youtubeFake.TitlesReceived.Should().BeEmpty();
-        _publisherFake.TitleSetEvents.Should().BeEmpty();
-        _publisherFake.TitleFailedEvents.Should().BeEmpty();
         _alertFake.Alerts.Should().BeEmpty();
     }
 
     // ------------------------------------------------------------------
-    // Test 8: Unknown location throws, alert sent, failed event published.
+    // Test 8: Unknown location throws, alert sent.
     // Use a fresh timestamp so the staleness check does not short-circuit.
     // ------------------------------------------------------------------
     [Fact]
@@ -385,11 +343,7 @@ public class IsolatedFunctionTests
 
         _alertFake.Alerts.Should().ContainSingle();
 
-        _publisherFake.TitleFailedEvents.Should().ContainSingle();
-        _publisherFake.TitleFailedEvents[0].Location.Should().Be("unknown-place");
-
         _restreamFake.TitlesReceived.Should().BeEmpty();
         _youtubeFake.TitlesReceived.Should().BeEmpty();
-        _publisherFake.TitleSetEvents.Should().BeEmpty();
     }
 }

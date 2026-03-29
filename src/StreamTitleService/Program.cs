@@ -1,6 +1,5 @@
 using Azure.Communication.Email;
 using Azure.Identity;
-using Azure.Messaging.ServiceBus;
 using Azure.Security.KeyVault.Secrets;
 using Azure.Storage.Blobs;
 using Microsoft.Azure.Functions.Worker;
@@ -103,29 +102,6 @@ var host = new HostBuilder()
             };
         });
 
-        // ServiceBus sender for stream-title topic
-        var serviceBusConnection = Environment.GetEnvironmentVariable("SERVICE_BUS_CONNECTION") ?? "";
-        if (!string.IsNullOrEmpty(serviceBusConnection))
-        {
-            services.AddSingleton(new ServiceBusClient(serviceBusConnection));
-        }
-        else
-        {
-            services.AddSingleton<ServiceBusClient>(sp =>
-                throw new InvalidOperationException("SERVICE_BUS_CONNECTION environment variable is not set"));
-        }
-        var sbTopic = Environment.GetEnvironmentVariable("SERVICE_BUS_TOPIC") ?? "stream-title";
-        services.AddSingleton(sp =>
-            sp.GetRequiredService<ServiceBusClient>().CreateSender(sbTopic));
-
-        // ServiceBusEventPublisher (Singleton)
-        services.AddSingleton<IEventPublisher>(sp =>
-        {
-            var sender = sp.GetRequiredService<ServiceBusSender>();
-            var logger = sp.GetService<Microsoft.Extensions.Logging.ILogger<ServiceBusEventPublisher>>();
-            return new ServiceBusEventPublisher(sender, logger);
-        });
-
         // AcsAlertNotifier (Singleton)
         var acsConnectionString = Environment.GetEnvironmentVariable("ACS_CONNECTION_STRING");
         if (!string.IsNullOrEmpty(acsConnectionString))
@@ -156,10 +132,9 @@ var host = new HostBuilder()
         {
             var locationMapping = sp.GetRequiredService<ILocationPlatformMapper>();
             var clients = sp.GetRequiredService<IReadOnlyDictionary<TargetPlatform, ITitlePlatformClient>>();
-            var eventPublisher = sp.GetRequiredService<IEventPublisher>();
             var alertNotifier = sp.GetRequiredService<IAlertNotifier>();
             var logger = sp.GetService<Microsoft.Extensions.Logging.ILogger<StreamTitleHandler>>();
-            return new StreamTitleHandler(locationMapping, clients, eventPublisher, alertNotifier, stalenessSeconds, logger);
+            return new StreamTitleHandler(locationMapping, clients, alertNotifier, stalenessSeconds, logger);
         });
     })
     .Build();

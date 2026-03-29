@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using StreamTitleService.Application.Ports.Inbound;
 using StreamTitleService.Application.Ports.Outbound;
@@ -13,7 +12,6 @@ public class StreamTitleHandler : IStreamTitleHandler
 {
     private readonly ILocationPlatformMapper _locationMapping;
     private readonly IReadOnlyDictionary<TargetPlatform, ITitlePlatformClient> _clients;
-    private readonly IEventPublisher _eventPublisher;
     private readonly IAlertNotifier _alertNotifier;
     private readonly int _stalenessThresholdSeconds;
     private readonly TitleResolver _titleResolver = new();
@@ -22,14 +20,12 @@ public class StreamTitleHandler : IStreamTitleHandler
     public StreamTitleHandler(
         ILocationPlatformMapper locationMapping,
         IReadOnlyDictionary<TargetPlatform, ITitlePlatformClient> clients,
-        IEventPublisher eventPublisher,
         IAlertNotifier alertNotifier,
         int stalenessThresholdSeconds = 90,
         ILogger<StreamTitleHandler>? logger = null)
     {
         _locationMapping = locationMapping;
         _clients = clients;
-        _eventPublisher = eventPublisher;
         _alertNotifier = alertNotifier;
         _stalenessThresholdSeconds = stalenessThresholdSeconds;
         _logger = logger;
@@ -54,7 +50,7 @@ public class StreamTitleHandler : IStreamTitleHandler
         }
         catch (UnknownLocationException ex)
         {
-            await PublishFailedAsync(evt, evt.Data.Title ?? "(default)", "unknown", ex.Message, 0, 0, ct);
+            _logger?.LogError("StreamTitleFailed: Location={Location} is unknown. Event will be dead-lettered.", evt.Location);
             try
             {
                 await _alertNotifier.SendFailureAlertAsync(
@@ -76,7 +72,8 @@ public class StreamTitleHandler : IStreamTitleHandler
         if (!_clients.TryGetValue(platform, out var client))
         {
             var error = $"No client registered for platform: {platform.Value}";
-            await PublishFailedAsync(evt, title.Value, platform.Value, error, 0, 0, ct);
+            _logger?.LogError("StreamTitleFailed: Title={Title}, Platform={Platform}, Error={Error}",
+                title.Value, platform.Value, error);
             await _alertNotifier.SendFailureAlertAsync(title.Value, error, ct);
             throw new InvalidOperationException(error);
         }
@@ -89,66 +86,13 @@ public class StreamTitleHandler : IStreamTitleHandler
         }
         catch (Exception ex)
         {
-            var attempted = (ex as TitleUpdateException)?.ChannelsAttempted ?? 0;
-            var updated = (ex as TitleUpdateException)?.ChannelsUpdated ?? 0;
-            await PublishFailedAsync(evt, title.Value, platform.Value, ex.Message, updated, attempted, ct);
+            _logger?.LogError(ex, "StreamTitleFailed: Title={Title}, Platform={Platform}, Error={Error}",
+                title.Value, platform.Value, ex.Message);
             await _alertNotifier.SendFailureAlertAsync(title.Value, ex.Message, ct);
             throw;
         }
 
-        try
-        {
-            await _eventPublisher.PublishTitleSetAsync(new StreamTitleSetEvent
-            {
-                Timestamp = DateTimeOffset.UtcNow,
-                Location = location.Value,
-                TraceId = Activity.Current?.TraceId.ToString(),
-                SpanId = Activity.Current?.SpanId.ToString(),
-                ParentSpanId = evt.SpanId,
-                Data = new StreamTitleSetData
-                {
-                    Title = title.Value,
-                    TargetPlatform = platform.Value,
-                    ChannelsUpdated = result.ChannelsUpdated,
-                    ChannelsFailed = result.ChannelsFailed
-                }
-            }, ct);
-        }
-        catch (Exception pubEx)
-        {
-            _logger?.LogError(pubEx, "Failed to publish StreamTitleSet event");
-        }
-
-        _logger?.LogInformation("Title set: '{Title}' on {Platform} ({Updated} channels)",
-            title.Value, platform.Value, result.ChannelsUpdated);
-    }
-
-    private async Task PublishFailedAsync(
-        StreamStartedEvent evt, string title, string platform,
-        string error, int updated, int attempted, CancellationToken ct)
-    {
-        try
-        {
-            await _eventPublisher.PublishTitleFailedAsync(new StreamTitleFailedEvent
-            {
-                Timestamp = DateTimeOffset.UtcNow,
-                Location = evt.Location,
-                TraceId = Activity.Current?.TraceId.ToString(),
-                SpanId = Activity.Current?.SpanId.ToString(),
-                ParentSpanId = evt.SpanId,
-                Data = new StreamTitleFailedData
-                {
-                    Title = title,
-                    TargetPlatform = platform,
-                    Error = error,
-                    ChannelsUpdated = updated,
-                    ChannelsAttempted = attempted
-                }
-            }, ct);
-        }
-        catch (Exception pubEx)
-        {
-            _logger?.LogError(pubEx, "Failed to publish StreamTitleFailed event");
-        }
+        _logger?.LogInformation("StreamTitleSet: Title={Title}, Platform={Platform}, ChannelsUpdated={Updated}, ChannelsFailed={Failed}",
+            title.Value, platform.Value, result.ChannelsUpdated, result.ChannelsFailed);
     }
 }

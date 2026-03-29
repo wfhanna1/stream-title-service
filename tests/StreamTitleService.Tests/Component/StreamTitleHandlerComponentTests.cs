@@ -28,24 +28,6 @@ internal sealed class FakeTitlePlatformClient : ITitlePlatformClient
     }
 }
 
-internal sealed class FakeEventPublisher : IEventPublisher
-{
-    public List<StreamTitleSetEvent> TitleSetEvents { get; } = new();
-    public List<StreamTitleFailedEvent> TitleFailedEvents { get; } = new();
-
-    public Task PublishTitleSetAsync(StreamTitleSetEvent evt, CancellationToken ct)
-    {
-        TitleSetEvents.Add(evt);
-        return Task.CompletedTask;
-    }
-
-    public Task PublishTitleFailedAsync(StreamTitleFailedEvent evt, CancellationToken ct)
-    {
-        TitleFailedEvents.Add(evt);
-        return Task.CompletedTask;
-    }
-}
-
 internal sealed class FakeAlertNotifier : IAlertNotifier
 {
     public List<(string Title, string Error)> Alerts { get; } = new();
@@ -66,7 +48,6 @@ public class StreamTitleHandlerComponentTests
 {
     private readonly FakeTitlePlatformClient _restreamFake = new();
     private readonly FakeTitlePlatformClient _youtubeFake = new();
-    private readonly FakeEventPublisher _eventPublisher = new();
     private readonly FakeAlertNotifier _alertNotifier = new();
     private readonly StreamTitleHandler _handler;
 
@@ -81,7 +62,6 @@ public class StreamTitleHandlerComponentTests
         _handler = new StreamTitleHandler(
             new LocationPlatformMapping(),
             clients,
-            _eventPublisher,
             _alertNotifier,
             stalenessThresholdSeconds: 90);
     }
@@ -101,13 +81,11 @@ public class StreamTitleHandlerComponentTests
     // ------------------------------------------------------------------
     // Scenario 1: StreamStarted with explicit title "Arabic Bible Study"
     //             for location "virtual" -> RestreamClient called with
-    //             full formatted title, StreamTitleSetEvent published.
+    //             full formatted title, success logged (not published).
     // ------------------------------------------------------------------
     [Fact]
     public async Task HappyPath_ExplicitTitle_FormatsAndSetsTitle()
     {
-        // Use a fresh timestamp so the staleness check does not drop the event.
-        // We only care about the date prefix; the regex assertion covers it generically.
         var timestamp = DateTimeOffset.UtcNow;
         var evt = CreateEvent("virtual", "Arabic Bible Study", timestamp);
 
@@ -121,16 +99,7 @@ public class StreamTitleHandlerComponentTests
         sentTitle.Should().Contain("Arabic Bible Study");
         sentTitle.Should().MatchRegex(@"^(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday),\s+\w+\s+\d{1,2},\s+\d{4}\s+-\s+Arabic Bible Study$");
 
-        // A StreamTitleSetEvent was published with the correct data.
-        _eventPublisher.TitleSetEvents.Should().ContainSingle();
-        var published = _eventPublisher.TitleSetEvents[0];
-        published.Data.Title.Should().Be(sentTitle);
-        published.Data.TargetPlatform.Should().Be("restream");
-        published.Data.ChannelsUpdated.Should().Be(3);
-        published.Location.Should().Be("virtual");
-
-        // No failure events, no alerts.
-        _eventPublisher.TitleFailedEvents.Should().BeEmpty();
+        // No alerts.
         _alertNotifier.Alerts.Should().BeEmpty();
 
         // YouTube client was never touched.
@@ -157,21 +126,15 @@ public class StreamTitleHandlerComponentTests
         sentTitle.Should().Contain("Divine Liturgy");
         sentTitle.Should().MatchRegex(@"^Sunday,\s+March\s+29,\s+2026\s+-\s+Divine Liturgy$");
 
-        _eventPublisher.TitleSetEvents.Should().ContainSingle();
-        var published = _eventPublisher.TitleSetEvents[0];
-        published.Data.Title.Should().Be(sentTitle);
-        published.Data.TargetPlatform.Should().Be("restream");
-
-        _eventPublisher.TitleFailedEvents.Should().BeEmpty();
         _alertNotifier.Alerts.Should().BeEmpty();
     }
 
     // ------------------------------------------------------------------
-    // Scenario 3: RestreamClient throws -> StreamTitleFailedEvent
-    //             published, alert sent, exception propagated.
+    // Scenario 3: RestreamClient throws -> failure logged, alert sent,
+    //             exception propagated.
     // ------------------------------------------------------------------
     [Fact]
-    public async Task FailurePath_ClientThrows_PublishesFailedEventAndAlert()
+    public async Task FailurePath_ClientThrows_LogsFailureAndAlert()
     {
         var timestamp = DateTimeOffset.UtcNow;
         var evt = CreateEvent("virtual", "Test Stream", timestamp);
@@ -182,18 +145,9 @@ public class StreamTitleHandlerComponentTests
         await act.Should().ThrowAsync<InvalidOperationException>()
             .WithMessage("Token refresh failed");
 
-        // A failure event was published.
-        _eventPublisher.TitleFailedEvents.Should().ContainSingle();
-        var failedEvt = _eventPublisher.TitleFailedEvents[0];
-        failedEvt.Data.Error.Should().Contain("Token refresh failed");
-        failedEvt.Data.TargetPlatform.Should().Be("restream");
-
         // An alert was sent.
         _alertNotifier.Alerts.Should().ContainSingle();
         _alertNotifier.Alerts[0].Error.Should().Contain("Token refresh failed");
-
-        // No success events.
-        _eventPublisher.TitleSetEvents.Should().BeEmpty();
     }
 
     // ------------------------------------------------------------------
@@ -210,8 +164,6 @@ public class StreamTitleHandlerComponentTests
 
         _restreamFake.TitlesReceived.Should().BeEmpty();
         _youtubeFake.TitlesReceived.Should().BeEmpty();
-        _eventPublisher.TitleSetEvents.Should().BeEmpty();
-        _eventPublisher.TitleFailedEvents.Should().BeEmpty();
         _alertNotifier.Alerts.Should().BeEmpty();
     }
 
@@ -235,13 +187,7 @@ public class StreamTitleHandlerComponentTests
         var sentTitle = _restreamFake.TitlesReceived[0];
         sentTitle.Should().Be("Saturday, April 04, 2026 - Vespers and Midnight Praises");
 
-        _eventPublisher.TitleSetEvents.Should().ContainSingle();
-        var published = _eventPublisher.TitleSetEvents[0];
-        published.Data.Title.Should().Be(sentTitle);
-        published.Data.TargetPlatform.Should().Be("restream");
-
         _youtubeFake.TitlesReceived.Should().BeEmpty();
-        _eventPublisher.TitleFailedEvents.Should().BeEmpty();
         _alertNotifier.Alerts.Should().BeEmpty();
     }
 
@@ -264,21 +210,15 @@ public class StreamTitleHandlerComponentTests
         // Restream client must not have been called.
         _restreamFake.TitlesReceived.Should().BeEmpty();
 
-        _eventPublisher.TitleSetEvents.Should().ContainSingle();
-        var published = _eventPublisher.TitleSetEvents[0];
-        published.Data.TargetPlatform.Should().Be("youtube");
-        published.Location.Should().Be("st. anthony chapel");
-
-        _eventPublisher.TitleFailedEvents.Should().BeEmpty();
         _alertNotifier.Alerts.Should().BeEmpty();
     }
 
     // ------------------------------------------------------------------
-    // Scenario 7: Unknown location "holy cross" -> throws, publishes
-    //             StreamTitleFailedEvent, sends alert.
+    // Scenario 7: Unknown location "holy cross" -> throws, logs failure,
+    //             sends alert.
     // ------------------------------------------------------------------
     [Fact]
-    public async Task UnknownLocation_ThroughFullPipeline_PublishesFailedAndAlerts()
+    public async Task UnknownLocation_ThroughFullPipeline_LogsFailureAndAlerts()
     {
         var timestamp = DateTimeOffset.UtcNow;
         var evt = CreateEvent("holy cross", "Some Title", timestamp);
@@ -286,14 +226,9 @@ public class StreamTitleHandlerComponentTests
         var act = () => _handler.HandleAsync(evt, CancellationToken.None);
         await act.Should().ThrowAsync<Exception>();
 
-        _eventPublisher.TitleFailedEvents.Should().ContainSingle();
-        var failedEvt = _eventPublisher.TitleFailedEvents[0];
-        failedEvt.Location.Should().Be("holy cross");
-
         _alertNotifier.Alerts.Should().ContainSingle();
 
-        // No success events, no platform client calls.
-        _eventPublisher.TitleSetEvents.Should().BeEmpty();
+        // No platform client calls.
         _restreamFake.TitlesReceived.Should().BeEmpty();
         _youtubeFake.TitlesReceived.Should().BeEmpty();
     }
@@ -319,19 +254,15 @@ public class StreamTitleHandlerComponentTests
         // Old date prefix stripped; new prefix from event timestamp applied.
         sentTitle.Should().Be("Sunday, March 29, 2026 - Old Liturgy");
 
-        _eventPublisher.TitleSetEvents.Should().ContainSingle();
-        _eventPublisher.TitleSetEvents[0].Data.Title.Should().Be(sentTitle);
-
-        _eventPublisher.TitleFailedEvents.Should().BeEmpty();
         _alertNotifier.Alerts.Should().BeEmpty();
     }
 
     // ------------------------------------------------------------------
     // Scenario 9: Platform client returns partial failure (2 updated,
-    //             1 failed). StreamTitleSetEvent must reflect those counts.
+    //             1 failed). Handler completes successfully (no throw).
     // ------------------------------------------------------------------
     [Fact]
-    public async Task PartialPlatformFailure_StillPublishesResult()
+    public async Task PartialPlatformFailure_StillCompletes()
     {
         var timestamp = DateTimeOffset.UtcNow;
         var evt = CreateEvent("virtual", "Partial Update Stream", timestamp);
@@ -340,13 +271,7 @@ public class StreamTitleHandlerComponentTests
 
         await _handler.HandleAsync(evt, CancellationToken.None);
 
-        _eventPublisher.TitleSetEvents.Should().ContainSingle();
-        var published = _eventPublisher.TitleSetEvents[0];
-        published.Data.ChannelsUpdated.Should().Be(2);
-        published.Data.ChannelsFailed.Should().Be(1);
-        published.Data.TargetPlatform.Should().Be("restream");
-
-        _eventPublisher.TitleFailedEvents.Should().BeEmpty();
+        _restreamFake.TitlesReceived.Should().ContainSingle();
         _alertNotifier.Alerts.Should().BeEmpty();
     }
 
@@ -371,11 +296,6 @@ public class StreamTitleHandlerComponentTests
         _restreamFake.TitlesReceived[0].Should().Contain("First Stream Title");
         _restreamFake.TitlesReceived[1].Should().Contain("Second Stream Title");
 
-        _eventPublisher.TitleSetEvents.Should().HaveCount(2);
-        _eventPublisher.TitleSetEvents[0].Data.Title.Should().Be(_restreamFake.TitlesReceived[0]);
-        _eventPublisher.TitleSetEvents[1].Data.Title.Should().Be(_restreamFake.TitlesReceived[1]);
-
-        _eventPublisher.TitleFailedEvents.Should().BeEmpty();
         _alertNotifier.Alerts.Should().BeEmpty();
         _youtubeFake.TitlesReceived.Should().BeEmpty();
     }

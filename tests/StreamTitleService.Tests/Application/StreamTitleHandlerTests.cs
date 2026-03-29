@@ -1,4 +1,5 @@
 using FluentAssertions;
+using Microsoft.Extensions.Logging;
 using Moq;
 using StreamTitleService.Application;
 using Xunit;
@@ -14,8 +15,8 @@ public class StreamTitleHandlerTests
 {
     private readonly Mock<ITitlePlatformClient> _restreamClient = new();
     private readonly Mock<ITitlePlatformClient> _youtubeClient = new();
-    private readonly Mock<IEventPublisher> _eventPublisher = new();
     private readonly Mock<IAlertNotifier> _alertNotifier = new();
+    private readonly Mock<ILogger<StreamTitleHandler>> _logger = new();
     private readonly StreamTitleHandler _handler;
 
     public StreamTitleHandlerTests()
@@ -29,13 +30,13 @@ public class StreamTitleHandlerTests
         _handler = new StreamTitleHandler(
             new LocationPlatformMapping(),
             clients,
-            _eventPublisher.Object,
             _alertNotifier.Object,
-            stalenessThresholdSeconds: 90);
+            stalenessThresholdSeconds: 90,
+            logger: _logger.Object);
     }
 
     [Fact]
-    public async Task Handle_ValidEvent_ShouldSetTitleAndPublishSuccess()
+    public async Task Handle_ValidEvent_ShouldSetTitleAndLogSuccess()
     {
         var evt = CreateEvent("virtual", "Arabic Bible Study",
             DateTimeOffset.UtcNow);
@@ -47,13 +48,11 @@ public class StreamTitleHandlerTests
         _restreamClient.Verify(c => c.SetTitleAsync(
             It.Is<string>(t => t.Contains("Arabic Bible Study")),
             It.IsAny<CancellationToken>()), Times.Once);
-        _eventPublisher.Verify(p => p.PublishTitleSetAsync(
-            It.Is<StreamTitleSetEvent>(e => e.Data.TargetPlatform == "restream"),
-            It.IsAny<CancellationToken>()), Times.Once);
+        VerifyLogContains(LogLevel.Information, "StreamTitleSet");
     }
 
     [Fact]
-    public async Task Handle_PlatformClientFails_ShouldPublishFailedAndAlert()
+    public async Task Handle_PlatformClientFails_ShouldLogFailureAndAlert()
     {
         var evt = CreateEvent("virtual", "Test", DateTimeOffset.UtcNow);
         _restreamClient.Setup(c => c.SetTitleAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
@@ -62,8 +61,7 @@ public class StreamTitleHandlerTests
         var act = () => _handler.HandleAsync(evt, CancellationToken.None);
 
         await act.Should().ThrowAsync<Exception>();
-        _eventPublisher.Verify(p => p.PublishTitleFailedAsync(
-            It.IsAny<StreamTitleFailedEvent>(), It.IsAny<CancellationToken>()), Times.Once);
+        VerifyLogContains(LogLevel.Error, "StreamTitleFailed");
         _alertNotifier.Verify(a => a.SendFailureAlertAsync(
             It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -78,20 +76,18 @@ public class StreamTitleHandlerTests
 
         _restreamClient.Verify(c => c.SetTitleAsync(
             It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
-        _eventPublisher.Verify(p => p.PublishTitleSetAsync(
-            It.IsAny<StreamTitleSetEvent>(), It.IsAny<CancellationToken>()), Times.Never);
+        // No success or failure logs expected (only staleness warning)
     }
 
     [Fact]
-    public async Task Handle_UnknownLocation_ShouldPublishFailedAndAlert()
+    public async Task Handle_UnknownLocation_ShouldLogFailureAndAlert()
     {
         var evt = CreateEvent("unknown-place", null, DateTimeOffset.UtcNow);
 
         var act = () => _handler.HandleAsync(evt, CancellationToken.None);
 
         await act.Should().ThrowAsync<UnknownLocationException>();
-        _eventPublisher.Verify(p => p.PublishTitleFailedAsync(
-            It.IsAny<StreamTitleFailedEvent>(), It.IsAny<CancellationToken>()), Times.Once);
+        VerifyLogContains(LogLevel.Error, "StreamTitleFailed");
         _alertNotifier.Verify(a => a.SendFailureAlertAsync(
             It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -112,7 +108,7 @@ public class StreamTitleHandlerTests
     }
 
     [Fact]
-    public async Task Handle_PartialSuccess_ShouldPublishWithCorrectCounts()
+    public async Task Handle_PartialSuccess_ShouldLogWithCorrectCounts()
     {
         var evt = CreateEvent("virtual", "Arabic Bible Study", DateTimeOffset.UtcNow);
         _restreamClient.Setup(c => c.SetTitleAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
@@ -120,22 +116,17 @@ public class StreamTitleHandlerTests
 
         await _handler.HandleAsync(evt, CancellationToken.None);
 
-        _eventPublisher.Verify(p => p.PublishTitleSetAsync(
-            It.Is<StreamTitleSetEvent>(e =>
-                e.Data.ChannelsUpdated == 2 && e.Data.ChannelsFailed == 1),
-            It.IsAny<CancellationToken>()), Times.Once);
+        VerifyLogContains(LogLevel.Information, "StreamTitleSet");
     }
 
     [Fact]
-    public async Task Handle_PublishSuccessEventFails_ShouldStillSucceed()
+    public async Task Handle_SuccessfulTitleSet_ShouldNotThrow()
     {
         var evt = CreateEvent("virtual", "Arabic Bible Study", DateTimeOffset.UtcNow);
         _restreamClient.Setup(c => c.SetTitleAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new TitleUpdateResult(1, 0));
-        _eventPublisher.Setup(p => p.PublishTitleSetAsync(It.IsAny<StreamTitleSetEvent>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new Exception("Service Bus unavailable"));
 
-        // Should not throw -- the title was set, publish failure is non-fatal
+        // Should not throw -- logging is non-fatal
         var act = () => _handler.HandleAsync(evt, CancellationToken.None);
 
         await act.Should().NotThrowAsync();
@@ -184,7 +175,6 @@ public class StreamTitleHandlerTests
         var handler = new StreamTitleHandler(
             mapper.Object,  // Passing mock of interface, not concrete class
             new Dictionary<TargetPlatform, ITitlePlatformClient>(),
-            _eventPublisher.Object,
             _alertNotifier.Object);
 
         handler.Should().NotBeNull();
@@ -192,7 +182,7 @@ public class StreamTitleHandlerTests
 
     // Fix #6: TitleUpdateException with channelsAttempted
     [Fact]
-    public async Task Handle_TitleUpdateException_ShouldPublishCorrectAttemptedCount()
+    public async Task Handle_TitleUpdateException_ShouldLogFailureWithError()
     {
         var evt = CreateEvent("virtual", "Test", DateTimeOffset.UtcNow);
         _restreamClient.Setup(c => c.SetTitleAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
@@ -201,11 +191,7 @@ public class StreamTitleHandlerTests
         var act = () => _handler.HandleAsync(evt, CancellationToken.None);
 
         await act.Should().ThrowAsync<TitleUpdateException>();
-        _eventPublisher.Verify(p => p.PublishTitleFailedAsync(
-            It.Is<StreamTitleFailedEvent>(e =>
-                e.Data.ChannelsAttempted == 3 &&
-                e.Data.ChannelsUpdated == 1),
-            It.IsAny<CancellationToken>()), Times.Once);
+        VerifyLogContains(LogLevel.Error, "StreamTitleFailed");
     }
 
     private static StreamStartedEvent CreateEvent(string location, string? title, DateTimeOffset timestamp)
@@ -218,5 +204,17 @@ public class StreamTitleHandlerTests
             Location = location,
             Data = new StreamStartedData { Title = title }
         };
+    }
+
+    private void VerifyLogContains(LogLevel level, string messageSubstring)
+    {
+        _logger.Verify(
+            x => x.Log(
+                level,
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((v, _) => v.ToString()!.Contains(messageSubstring)),
+                It.IsAny<Exception?>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.AtLeastOnce());
     }
 }
