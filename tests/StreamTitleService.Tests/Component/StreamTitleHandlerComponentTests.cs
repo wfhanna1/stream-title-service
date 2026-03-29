@@ -349,4 +349,34 @@ public class StreamTitleHandlerComponentTests
         _eventPublisher.TitleFailedEvents.Should().BeEmpty();
         _alertNotifier.Alerts.Should().BeEmpty();
     }
+
+    // ------------------------------------------------------------------
+    // Scenario 10: Two back-to-back events with different titles both
+    //              processed successfully. Verifies handler has no stale
+    //              state between calls.
+    // ------------------------------------------------------------------
+    [Fact]
+    public async Task BackToBackEvents_BothProcessedSuccessfully()
+    {
+        var timestamp = DateTimeOffset.UtcNow;
+        var evt1 = CreateEvent("virtual", "First Stream Title", timestamp);
+        var evt2 = CreateEvent("virtual", "Second Stream Title", timestamp);
+
+        _restreamFake.ResultToReturn = new TitleUpdateResult(2, 0);
+
+        await _handler.HandleAsync(evt1, CancellationToken.None);
+        await _handler.HandleAsync(evt2, CancellationToken.None);
+
+        _restreamFake.TitlesReceived.Should().HaveCount(2);
+        _restreamFake.TitlesReceived[0].Should().Contain("First Stream Title");
+        _restreamFake.TitlesReceived[1].Should().Contain("Second Stream Title");
+
+        _eventPublisher.TitleSetEvents.Should().HaveCount(2);
+        _eventPublisher.TitleSetEvents[0].Data.Title.Should().Be(_restreamFake.TitlesReceived[0]);
+        _eventPublisher.TitleSetEvents[1].Data.Title.Should().Be(_restreamFake.TitlesReceived[1]);
+
+        _eventPublisher.TitleFailedEvents.Should().BeEmpty();
+        _alertNotifier.Alerts.Should().BeEmpty();
+        _youtubeFake.TitlesReceived.Should().BeEmpty();
+    }
 }

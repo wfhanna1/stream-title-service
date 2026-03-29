@@ -266,6 +266,76 @@ public class IsolatedFunctionTests
     }
 
     // ------------------------------------------------------------------
+    // Test: Two consecutive events with different titles both processed.
+    // Verifies the full function + handler pipeline handles sequential
+    // messages without stale state.
+    // ------------------------------------------------------------------
+    [Fact]
+    public async Task FullPipeline_TwoConsecutiveEvents_BothProcessed()
+    {
+        var timestamp = DateTimeOffset.UtcNow;
+        var json1 = $$"""
+            {
+                "eventType": "StreamStarted",
+                "source": "isolated-test",
+                "timestamp": "{{timestamp:o}}",
+                "location": "virtual",
+                "data": { "title": "Event 1" }
+            }
+            """;
+
+        var json2 = $$"""
+            {
+                "eventType": "StreamStarted",
+                "source": "isolated-test",
+                "timestamp": "{{timestamp:o}}",
+                "location": "virtual",
+                "data": { "title": "Event 2" }
+            }
+            """;
+
+        await _function.Run(json1);
+        await _function.Run(json2);
+
+        _restreamFake.TitlesReceived.Should().HaveCount(2);
+        _restreamFake.TitlesReceived[0].Should().Contain("Event 1");
+        _restreamFake.TitlesReceived[1].Should().Contain("Event 2");
+
+        _publisherFake.TitleSetEvents.Should().HaveCount(2);
+        _publisherFake.TitleFailedEvents.Should().BeEmpty();
+        _alertFake.Alerts.Should().BeEmpty();
+        _youtubeFake.TitlesReceived.Should().BeEmpty();
+    }
+
+    // ------------------------------------------------------------------
+    // Test: data: {} with no title triggers DefaultTitleGenerator.
+    // Use a Sunday morning timestamp so the default is "Divine Liturgy".
+    // ------------------------------------------------------------------
+    [Fact]
+    public async Task FullPipeline_EventWithNoData_UsesDefaultTitle()
+    {
+        var json = """
+            {
+                "eventType": "StreamStarted",
+                "source": "isolated-test",
+                "timestamp": "2026-03-29T13:00:00Z",
+                "location": "virtual",
+                "data": {}
+            }
+            """;
+
+        await _function.Run(json);
+
+        _restreamFake.TitlesReceived.Should().ContainSingle();
+        var sentTitle = _restreamFake.TitlesReceived[0];
+        sentTitle.Should().Contain("Divine Liturgy");
+
+        _publisherFake.TitleSetEvents.Should().ContainSingle();
+        _publisherFake.TitleFailedEvents.Should().BeEmpty();
+        _alertFake.Alerts.Should().BeEmpty();
+    }
+
+    // ------------------------------------------------------------------
     // Test 7: Stale event (2 minutes old) - no platform client calls.
     // The staleness threshold defaults to 90 seconds.
     // ------------------------------------------------------------------

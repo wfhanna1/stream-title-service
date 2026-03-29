@@ -144,6 +144,60 @@ public class EndToEndTests : IAsyncDisposable
     }
 
     // ------------------------------------------------------------------
+    // Test: Two consecutive StreamStarted events both consumed by function.
+    // Verifies that the deployed function handles multiple sequential messages
+    // correctly, including any token rotation between calls.
+    // ------------------------------------------------------------------
+    [SkippableFact]
+    [Trait("Category", "E2E")]
+    public async Task TwoConsecutiveStreamStartedEvents_BothConsumedByFunction()
+    {
+        Skip.If(string.IsNullOrWhiteSpace(ConnectionString),
+            "INTEGRATION_TEST_SB_CONNECTION is not set; skipping E2E test.");
+
+        await DrainSubscriptionAsync();
+
+        var event1 = new StreamStartedEvent
+        {
+            EventType = "StreamStarted",
+            Source = "e2e-test",
+            Timestamp = DateTimeOffset.UtcNow,
+            Location = "virtual",
+            Data = new StreamStartedData { Title = "E2E Sequential Test - First" }
+        };
+
+        var event2 = new StreamStartedEvent
+        {
+            EventType = "StreamStarted",
+            Source = "e2e-test",
+            Timestamp = DateTimeOffset.UtcNow,
+            Location = "virtual",
+            Data = new StreamStartedData { Title = "E2E Sequential Test - Second" }
+        };
+
+        await _sender!.SendMessageAsync(new ServiceBusMessage(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(event1)))
+        {
+            ContentType = "application/json",
+            Subject = "StreamStarted"
+        });
+
+        await Task.Delay(TimeSpan.FromSeconds(2));
+
+        await _sender!.SendMessageAsync(new ServiceBusMessage(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(event2)))
+        {
+            ContentType = "application/json",
+            Subject = "StreamStarted"
+        });
+
+        var isEmpty = await WaitForSubscriptionEmptyAsync(
+            timeout: TimeSpan.FromSeconds(120),
+            pollInterval: TimeSpan.FromSeconds(10));
+
+        isEmpty.Should().BeTrue(
+            "the deployed function should consume both sequential StreamStarted messages within 120 seconds");
+    }
+
+    // ------------------------------------------------------------------
     // Test 2: Unknown location causes dead-lettering after retries
     //
     // Verification: the message ends up in the dead-letter sub-queue.
