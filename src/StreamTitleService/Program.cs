@@ -46,7 +46,14 @@ var host = new HostBuilder()
             var httpClientFactory = sp.GetRequiredService<IHttpClientFactory>();
             var httpClient = httpClientFactory.CreateClient("TokenClient");
             var logger = sp.GetService<Microsoft.Extensions.Logging.ILogger<RestreamTokenProvider>>();
-            return new RestreamTokenProvider(httpClient, refreshToken, clientId, clientSecret, logger);
+
+            // Callback to persist new refresh tokens to Key Vault (survives cold starts)
+            Func<string, Task> onRefreshTokenUpdated = async newToken =>
+            {
+                await kvClient.SetSecretAsync("restream-refresh-token", newToken);
+            };
+
+            return new RestreamTokenProvider(httpClient, refreshToken, clientId, clientSecret, logger, onRefreshTokenUpdated);
         });
 
         // HttpClient for RestreamClient with Polly resilience
