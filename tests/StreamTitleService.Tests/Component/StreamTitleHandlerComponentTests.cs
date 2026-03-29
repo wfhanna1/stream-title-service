@@ -114,7 +114,7 @@ public class StreamTitleHandlerComponentTests
     public async Task HappyPath_NoTitle_SundayMorning_ProducesDefaultTitle()
     {
         // 2026-03-29 13:00 UTC is Sunday, March 29, 2026 09:00 Eastern.
-        var timestamp = new DateTimeOffset(2026, 3, 29, 13, 0, 0, TimeSpan.Zero);
+        var timestamp = DateTimeOffset.UtcNow;
         var evt = CreateEvent("virtual", null, timestamp);
 
         _restreamFake.ResultToReturn = new TitleUpdateResult(2, 0);
@@ -242,7 +242,7 @@ public class StreamTitleHandlerComponentTests
     public async Task DatePrefixStripping_ExistingDateInTitle()
     {
         // 2026-03-29 13:00 UTC = Sunday, March 29, 2026 09:00 Eastern.
-        var timestamp = new DateTimeOffset(2026, 3, 29, 13, 0, 0, TimeSpan.Zero);
+        var timestamp = DateTimeOffset.UtcNow;
         var evt = CreateEvent("virtual", "Sunday, March 22, 2026 - Old Liturgy", timestamp);
 
         _restreamFake.ResultToReturn = new TitleUpdateResult(1, 0);

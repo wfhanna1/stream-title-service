@@ -74,18 +74,23 @@ var host = new HostBuilder()
             return new RestreamClient(httpClient, tokenProvider, logger);
         });
 
-        // YouTubeClient -- wire real implementation when BLOB_STORAGE_CONNECTION is set
+        // YouTubeClient -- uses LazyYouTubeServiceWrapper to defer blob credential loading
+        // until the first YouTube API call (avoids async-over-sync deadlock at startup)
         var blobStorageConnection = Environment.GetEnvironmentVariable("BLOB_STORAGE_CONNECTION");
         services.AddSingleton<YouTubeClient>(sp =>
         {
             var logger = sp.GetService<Microsoft.Extensions.Logging.ILogger<YouTubeClient>>();
             if (!string.IsNullOrEmpty(blobStorageConnection))
             {
-                var blobClient = new BlobClient(blobStorageConnection, "youtube-tokens", "token.json");
-                var tokenProviderLogger = sp.GetService<Microsoft.Extensions.Logging.ILogger<BlobStorageYouTubeTokenProvider>>();
-                var youTubeTokenProvider = new BlobStorageYouTubeTokenProvider(blobClient, tokenProviderLogger);
-                var youTubeService = youTubeTokenProvider.CreateYouTubeServiceAsync(CancellationToken.None).GetAwaiter().GetResult();
-                return new YouTubeClient(new GoogleYouTubeServiceWrapper(youTubeService), logger);
+                var wrapper = new LazyYouTubeServiceWrapper(async () =>
+                {
+                    var blobClient = new BlobClient(blobStorageConnection, "youtube-tokens", "token.json");
+                    var tokenProviderLogger = sp.GetService<Microsoft.Extensions.Logging.ILogger<BlobStorageYouTubeTokenProvider>>();
+                    var youTubeTokenProvider = new BlobStorageYouTubeTokenProvider(blobClient, tokenProviderLogger);
+                    var youTubeService = await youTubeTokenProvider.CreateYouTubeServiceAsync(CancellationToken.None);
+                    return new GoogleYouTubeServiceWrapper(youTubeService);
+                });
+                return new YouTubeClient(wrapper, logger);
             }
 
             logger?.LogWarning("BLOB_STORAGE_CONNECTION is not set. YouTube path will throw if invoked.");

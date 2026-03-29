@@ -139,11 +139,12 @@ public class IsolatedFunctionTests
     [Fact]
     public async Task FullPipeline_DefaultTitle_FromRawJson()
     {
-        var json = """
+        var now = DateTimeOffset.UtcNow.ToString("O");
+        var json = $$"""
             {
                 "eventType": "StreamStarted",
                 "source": "isolated-test",
-                "timestamp": "2026-03-29T13:00:00Z",
+                "timestamp": "{{now}}",
                 "location": "virtual",
                 "data": {}
             }
@@ -276,11 +277,12 @@ public class IsolatedFunctionTests
     [Fact]
     public async Task FullPipeline_EventWithNoData_UsesDefaultTitle()
     {
-        var json = """
+        var now = DateTimeOffset.UtcNow.ToString("O");
+        var json = $$"""
             {
                 "eventType": "StreamStarted",
                 "source": "isolated-test",
-                "timestamp": "2026-03-29T13:00:00Z",
+                "timestamp": "{{now}}",
                 "location": "virtual",
                 "data": {}
             }
