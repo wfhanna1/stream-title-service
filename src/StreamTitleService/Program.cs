@@ -26,23 +26,23 @@ var host = new HostBuilder()
         // Domain configuration
         services.AddSingleton<ILocationPlatformMapper, LocationPlatformMapping>();
 
-        // Restream credentials from Key Vault
-        var keyVaultUri = Environment.GetEnvironmentVariable("KEY_VAULT_URI")
-            ?? throw new InvalidOperationException("KEY_VAULT_URI environment variable is not set");
-
-        var credential = new DefaultAzureCredential();
-        var kvClient = new SecretClient(new Uri(keyVaultUri), credential);
-
-        var refreshToken = kvClient.GetSecret("restream-refresh-token").Value.Value;
-        var clientId = kvClient.GetSecret("restream-client-id").Value.Value;
-        var clientSecret = kvClient.GetSecret("restream-client-secret").Value.Value;
-
         // HttpClient for RestreamTokenProvider (token refresh calls)
         services.AddHttpClient("TokenClient");
 
-        // Register RestreamTokenProvider (Singleton) with Key Vault credentials
+        // Register RestreamTokenProvider (Singleton) -- loads Key Vault secrets lazily at first resolution
+        var keyVaultUri = Environment.GetEnvironmentVariable("KEY_VAULT_URI");
         services.AddSingleton<ITokenProvider>(sp =>
         {
+            if (string.IsNullOrEmpty(keyVaultUri))
+                throw new InvalidOperationException("KEY_VAULT_URI environment variable is not set");
+
+            var credential = new DefaultAzureCredential();
+            var kvClient = new SecretClient(new Uri(keyVaultUri), credential);
+
+            var refreshToken = kvClient.GetSecret("restream-refresh-token").Value.Value;
+            var clientId = kvClient.GetSecret("restream-client-id").Value.Value;
+            var clientSecret = kvClient.GetSecret("restream-client-secret").Value.Value;
+
             var httpClientFactory = sp.GetRequiredService<IHttpClientFactory>();
             var httpClient = httpClientFactory.CreateClient("TokenClient");
             var logger = sp.GetService<Microsoft.Extensions.Logging.ILogger<RestreamTokenProvider>>();
@@ -97,10 +97,16 @@ var host = new HostBuilder()
         });
 
         // ServiceBus sender for stream-title topic
-        var serviceBusConnection = Environment.GetEnvironmentVariable("SERVICE_BUS_CONNECTION")
-            ?? throw new InvalidOperationException("SERVICE_BUS_CONNECTION environment variable is not set");
-
-        services.AddSingleton(new ServiceBusClient(serviceBusConnection));
+        var serviceBusConnection = Environment.GetEnvironmentVariable("SERVICE_BUS_CONNECTION") ?? "";
+        if (!string.IsNullOrEmpty(serviceBusConnection))
+        {
+            services.AddSingleton(new ServiceBusClient(serviceBusConnection));
+        }
+        else
+        {
+            services.AddSingleton<ServiceBusClient>(sp =>
+                throw new InvalidOperationException("SERVICE_BUS_CONNECTION environment variable is not set"));
+        }
         var sbTopic = Environment.GetEnvironmentVariable("SERVICE_BUS_TOPIC") ?? "stream-title";
         services.AddSingleton(sp =>
             sp.GetRequiredService<ServiceBusClient>().CreateSender(sbTopic));

@@ -222,7 +222,9 @@ public class StreamTitleHandlerComponentTests
     [Fact]
     public async Task DefaultTitle_SaturdayEvening_ProducesVespersTitle()
     {
-        var timestamp = new DateTimeOffset(2026, 3, 28, 23, 0, 0, TimeSpan.Zero);
+        // Far-future Saturday 7 PM EDT (UTC-4) to avoid staleness check
+        // Saturday April 4, 2026 19:00 EDT = 23:00 UTC
+        var timestamp = new DateTimeOffset(2026, 4, 4, 23, 0, 0, TimeSpan.Zero);
         var evt = CreateEvent("virtual", null, timestamp);
 
         _restreamFake.ResultToReturn = new TitleUpdateResult(2, 0);
@@ -231,7 +233,7 @@ public class StreamTitleHandlerComponentTests
 
         _restreamFake.TitlesReceived.Should().ContainSingle();
         var sentTitle = _restreamFake.TitlesReceived[0];
-        sentTitle.Should().Be("Saturday, March 28, 2026 - Vespers and Midnight Praises");
+        sentTitle.Should().Be("Saturday, April 04, 2026 - Vespers and Midnight Praises");
 
         _eventPublisher.TitleSetEvents.Should().ContainSingle();
         var published = _eventPublisher.TitleSetEvents[0];
