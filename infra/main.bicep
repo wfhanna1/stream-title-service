@@ -190,6 +190,19 @@ resource storageBlobRoleAssignment 'Microsoft.Authorization/roleAssignments@2022
   }
 }
 
+// Storage Blob Data Owner role assignment for Function App identity on its OWN storage
+// Required for identity-based AzureWebJobsStorage (Flex Consumption)
+var storageBlobDataOwnerRoleId = 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b'
+resource functionStorageBlobRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(storageAccount.id, functionApp.id, storageBlobDataOwnerRoleId)
+  scope: storageAccount
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageBlobDataOwnerRoleId)
+    principalId: functionApp.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
 // Outputs
 output functionAppName string = functionApp.name
 output functionAppPrincipalId string = functionApp.identity.principalId
