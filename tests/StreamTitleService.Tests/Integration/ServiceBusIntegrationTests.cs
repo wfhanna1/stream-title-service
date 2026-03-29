@@ -17,7 +17,9 @@ namespace StreamTitleService.Tests.Integration;
 public class ServiceBusIntegrationTests : IAsyncDisposable
 {
     private const string TopicName = "stream-title";
-    private const string SubscriptionName = "stream-title-service";
+    // Use a dedicated test subscription so integration tests don't compete
+    // with the deployed function on the stream-title-service subscription.
+    private const string SubscriptionName = "integration-test";
 
     private static readonly string? ConnectionString =
         Environment.GetEnvironmentVariable("INTEGRATION_TEST_SB_CONNECTION");
