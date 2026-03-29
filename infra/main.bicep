@@ -126,8 +126,8 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
           value: appInsightsConnectionString
         }
         {
-          name: 'AzureWebJobsStorage__accountName'
-          value: storageAccount.name
+          name: 'AzureWebJobsStorage'
+          value: 'DefaultEndpointsProtocol=https;AccountName=${storageAccount.name};EndpointSuffix=${environment().suffixes.storage};AccountKey=${storageAccount.listKeys().keys[0].value}'
         }
         {
           name: 'DEPLOYMENT_STORAGE_CONNECTION_STRING'
