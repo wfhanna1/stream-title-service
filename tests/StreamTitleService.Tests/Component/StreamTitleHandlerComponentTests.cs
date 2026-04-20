@@ -113,7 +113,6 @@ public class StreamTitleHandlerComponentTests
     [Fact]
     public async Task HappyPath_NoTitle_SundayMorning_ProducesDefaultTitle()
     {
-        // 2026-03-29 13:00 UTC is Sunday, March 29, 2026 09:00 Eastern.
         var timestamp = DateTimeOffset.UtcNow;
         var evt = CreateEvent("virtual", null, timestamp);
 
@@ -123,8 +122,13 @@ public class StreamTitleHandlerComponentTests
 
         _restreamFake.TitlesReceived.Should().ContainSingle();
         var sentTitle = _restreamFake.TitlesReceived[0];
-        sentTitle.Should().Contain("Divine Liturgy");
-        sentTitle.Should().MatchRegex(@"^Sunday,\s+March\s+29,\s+2026\s+-\s+Divine Liturgy$");
+
+        // Default title depends on day of week; just verify the format and suffix
+        var eastern = TimeZoneInfo.ConvertTime(timestamp, TimeZoneInfo.FindSystemTimeZoneById("America/New_York"));
+        var isSaturdayEvening = eastern.DayOfWeek == DayOfWeek.Saturday && eastern.Hour >= 17;
+        var expectedSuffix = isSaturdayEvening ? "Vespers and Midnight Praises" : "Divine Liturgy";
+        var expectedPrefix = eastern.ToString("dddd, MMMM dd, yyyy");
+        sentTitle.Should().Be($"{expectedPrefix} - {expectedSuffix}");
 
         _alertNotifier.Alerts.Should().BeEmpty();
     }
@@ -174,9 +178,12 @@ public class StreamTitleHandlerComponentTests
     [Fact]
     public async Task DefaultTitle_SaturdayEvening_ProducesVespersTitle()
     {
-        // Far-future Saturday 7 PM EDT (UTC-4) to avoid staleness check
-        // Saturday April 4, 2026 19:00 EDT = 23:00 UTC
-        var timestamp = new DateTimeOffset(2026, 4, 4, 23, 0, 0, TimeSpan.Zero);
+        // Find the next Saturday from now, set to 7 PM EDT (23:00 UTC) to avoid staleness
+        var now = DateTimeOffset.UtcNow;
+        var daysUntilSaturday = ((int)DayOfWeek.Saturday - (int)now.DayOfWeek + 7) % 7;
+        if (daysUntilSaturday == 0) daysUntilSaturday = 7; // next Saturday, not today
+        var nextSaturday = now.AddDays(daysUntilSaturday);
+        var timestamp = new DateTimeOffset(nextSaturday.Year, nextSaturday.Month, nextSaturday.Day, 23, 0, 0, TimeSpan.Zero);
         var evt = CreateEvent("virtual", null, timestamp);
 
         _restreamFake.ResultToReturn = new TitleUpdateResult(2, 0);
@@ -185,7 +192,9 @@ public class StreamTitleHandlerComponentTests
 
         _restreamFake.TitlesReceived.Should().ContainSingle();
         var sentTitle = _restreamFake.TitlesReceived[0];
-        sentTitle.Should().Be("Saturday, April 04, 2026 - Vespers and Midnight Praises");
+        var eastern = TimeZoneInfo.ConvertTime(timestamp, TimeZoneInfo.FindSystemTimeZoneById("America/New_York"));
+        var expectedPrefix = eastern.ToString("dddd, MMMM dd, yyyy");
+        sentTitle.Should().Be($"{expectedPrefix} - Vespers and Midnight Praises");
 
         _youtubeFake.TitlesReceived.Should().BeEmpty();
         _alertNotifier.Alerts.Should().BeEmpty();
@@ -241,7 +250,6 @@ public class StreamTitleHandlerComponentTests
     [Fact]
     public async Task DatePrefixStripping_ExistingDateInTitle()
     {
-        // 2026-03-29 13:00 UTC = Sunday, March 29, 2026 09:00 Eastern.
         var timestamp = DateTimeOffset.UtcNow;
         var evt = CreateEvent("virtual", "Sunday, March 22, 2026 - Old Liturgy", timestamp);
 
@@ -252,7 +260,9 @@ public class StreamTitleHandlerComponentTests
         _restreamFake.TitlesReceived.Should().ContainSingle();
         var sentTitle = _restreamFake.TitlesReceived[0];
         // Old date prefix stripped; new prefix from event timestamp applied.
-        sentTitle.Should().Be("Sunday, March 29, 2026 - Old Liturgy");
+        var eastern = TimeZoneInfo.ConvertTime(timestamp, TimeZoneInfo.FindSystemTimeZoneById("America/New_York"));
+        var expectedPrefix = eastern.ToString("dddd, MMMM dd, yyyy");
+        sentTitle.Should().Be($"{expectedPrefix} - Old Liturgy");
 
         _alertNotifier.Alerts.Should().BeEmpty();
     }
