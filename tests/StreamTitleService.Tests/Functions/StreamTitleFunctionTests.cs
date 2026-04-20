@@ -198,6 +198,26 @@ public class StreamTitleFunctionTests
     }
 
     [Fact]
+    public async Task Run_ShouldLogRawMessageBody()
+    {
+        var json = """{"eventType":"StreamStarted","source":"test","timestamp":"2026-03-27T12:00:00Z","location":"virtual","data":{"title":"Test Title"}}""";
+        _handler.Setup(h => h.HandleAsync(It.IsAny<StreamStartedEvent>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var function = new StreamTitleFunction(_handler.Object, _logger.Object);
+        await function.Run(json);
+
+        _logger.Verify(
+            x => x.Log(
+                LogLevel.Debug,
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((v, _) => v.ToString()!.Contains("Test Title")),
+                It.IsAny<Exception?>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Once());
+    }
+
+    [Fact]
     public async Task Run_NullSchemaVersion_ShouldProcess()
     {
         // v1 is implicit (no field present)

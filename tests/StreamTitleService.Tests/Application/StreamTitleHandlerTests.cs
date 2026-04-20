@@ -194,6 +194,28 @@ public class StreamTitleHandlerTests
         VerifyLogContains(LogLevel.Error, "StreamTitleFailed");
     }
 
+    [Fact]
+    public async Task Handle_ValidEvent_ShouldLogResolvedTitleAndPlatformBeforeSetting()
+    {
+        var evt = CreateEvent("virtual", "Arabic Bible Study", DateTimeOffset.UtcNow);
+        _restreamClient.Setup(c => c.SetTitleAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TitleUpdateResult(1, 0));
+
+        await _handler.HandleAsync(evt, CancellationToken.None);
+
+        // Should log "Setting title" with resolved title and platform BEFORE calling SetTitleAsync
+        _logger.Verify(
+            x => x.Log(
+                LogLevel.Information,
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((v, _) =>
+                    v.ToString()!.Contains("Setting") &&
+                    v.ToString()!.Contains("Arabic Bible Study")),
+                It.IsAny<Exception?>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Once());
+    }
+
     private static StreamStartedEvent CreateEvent(string location, string? title, DateTimeOffset timestamp)
     {
         return new StreamStartedEvent

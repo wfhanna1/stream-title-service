@@ -44,6 +44,8 @@ public class StreamTitleFunction
 
     private async Task RunCoreAsync(string json, CancellationToken cancellationToken)
     {
+        _logger?.LogDebug("Raw message body: {Body}", json);
+
         var evt = JsonSerializer.Deserialize<StreamStartedEvent>(json)
             ?? throw new InvalidOperationException("Failed to deserialize StreamStartedEvent: null result");
 

@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text.Json;
 using FluentAssertions;
+using Microsoft.Extensions.Logging;
 using Moq;
 using Moq.Protected;
 using StreamTitleService.Application.Ports.Outbound;
@@ -13,9 +14,10 @@ public class RestreamClientTests
 {
     private readonly Mock<ITokenProvider> _tokenProvider = new();
     private readonly Mock<HttpMessageHandler> _httpHandler = new();
+    private readonly Mock<ILogger<RestreamClient>> _logger = new();
     private HttpClient _httpClient = null!;
 
-    private RestreamClient CreateClient()
+    private RestreamClient CreateClient(ILogger<RestreamClient>? logger = null)
     {
         _tokenProvider.Setup(t => t.GetAccessTokenAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync("test-access-token");
@@ -25,7 +27,7 @@ public class RestreamClientTests
             BaseAddress = new Uri("https://api.restream.io/v2/")
         };
 
-        return new RestreamClient(_httpClient, _tokenProvider.Object);
+        return new RestreamClient(_httpClient, _tokenProvider.Object, logger);
     }
 
     [Fact]
@@ -230,5 +232,86 @@ public class RestreamClientTests
 
         // DefaultRequestHeaders should NOT have Authorization set
         _httpClient.DefaultRequestHeaders.Authorization.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task SetTitle_ShouldLogEntryWithTitle()
+    {
+        SetupGetChannels(new[] { new { id = "ch1", displayName = "YT", enabled = true, streamingPlatformId = 5 } });
+        SetupPatchChannel(HttpStatusCode.OK);
+
+        var client = CreateClient(_logger.Object);
+        await client.SetTitleAsync("Sunday Liturgy", CancellationToken.None);
+
+        _logger.Verify(
+            x => x.Log(
+                LogLevel.Information,
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((v, _) => v.ToString()!.Contains("Sunday Liturgy")),
+                It.IsAny<Exception?>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.AtLeastOnce());
+    }
+
+    [Fact]
+    public async Task SetTitle_ChannelFetchFails_ShouldLogResponseBody()
+    {
+        _httpHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(r => r.RequestUri!.PathAndQuery.Contains("channel/all")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.Forbidden)
+            {
+                Content = new StringContent("{\"error\":\"access_denied\"}", System.Text.Encoding.UTF8, "application/json")
+            });
+
+        var client = CreateClient(_logger.Object);
+        var act = () => client.SetTitleAsync("Test", CancellationToken.None);
+
+        await act.Should().ThrowAsync<HttpRequestException>();
+
+        _logger.Verify(
+            x => x.Log(
+                LogLevel.Error,
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((v, _) =>
+                    v.ToString()!.Contains("403") &&
+                    v.ToString()!.Contains("access_denied")),
+                It.IsAny<Exception?>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Once());
+    }
+
+    [Fact]
+    public async Task SetTitle_PatchFails_ShouldLogResponseBody()
+    {
+        SetupGetChannels(new[] { new { id = "ch1", displayName = "YouTube", enabled = true, streamingPlatformId = 5 } });
+
+        _httpHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(r => r.Method == HttpMethod.Patch),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.InternalServerError)
+            {
+                Content = new StringContent("{\"error\":\"server_error\"}", System.Text.Encoding.UTF8, "application/json")
+            });
+
+        var client = CreateClient(_logger.Object);
+        var result = await client.SetTitleAsync("Test", CancellationToken.None);
+
+        result.ChannelsFailed.Should().Be(1);
+
+        _logger.Verify(
+            x => x.Log(
+                LogLevel.Warning,
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((v, _) =>
+                    v.ToString()!.Contains("YouTube") &&
+                    v.ToString()!.Contains("server_error")),
+                It.IsAny<Exception?>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Once());
     }
 }

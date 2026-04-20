@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text.Json;
 using FluentAssertions;
+using Microsoft.Extensions.Logging;
 using Moq;
 using Moq.Protected;
 using StreamTitleService.Infrastructure.Adapters;
@@ -11,14 +12,16 @@ namespace StreamTitleService.Tests.Infrastructure;
 public class RestreamTokenProviderTests
 {
     private readonly Mock<HttpMessageHandler> _httpHandler = new();
+    private readonly Mock<ILogger<RestreamTokenProvider>> _logger = new();
 
     private RestreamTokenProvider CreateProvider(string refreshToken = "refresh-token",
         string clientId = "client-id", string clientSecret = "client-secret",
-        Func<string, Task>? onRefreshTokenUpdated = null)
+        Func<string, Task>? onRefreshTokenUpdated = null,
+        ILogger<RestreamTokenProvider>? logger = null)
     {
         var httpClient = new HttpClient(_httpHandler.Object);
         return new RestreamTokenProvider(httpClient, refreshToken, clientId, clientSecret,
-            onRefreshTokenUpdated: onRefreshTokenUpdated);
+            logger: logger, onRefreshTokenUpdated: onRefreshTokenUpdated);
     }
 
     private void SetupTokenResponseWithRefreshToken(string accessToken, string? newRefreshToken, int expiresIn = 3600)
@@ -385,5 +388,35 @@ public class RestreamTokenProviderTests
         var act = () => provider.GetAccessTokenAsync(CancellationToken.None);
 
         await act.Should().ThrowAsync<Exception>();
+    }
+
+    [Fact]
+    public async Task GetAccessToken_HttpFailure_ShouldLogStatusAndBody()
+    {
+        _httpHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.Unauthorized)
+            {
+                Content = new StringContent("{\"error\":\"invalid_grant\"}", System.Text.Encoding.UTF8, "application/json")
+            });
+
+        var provider = CreateProvider(logger: _logger.Object);
+        var act = () => provider.GetAccessTokenAsync(CancellationToken.None);
+
+        await act.Should().ThrowAsync<HttpRequestException>();
+
+        _logger.Verify(
+            x => x.Log(
+                LogLevel.Error,
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((v, _) =>
+                    v.ToString()!.Contains("401") &&
+                    v.ToString()!.Contains("invalid_grant")),
+                It.IsAny<Exception?>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Once());
     }
 }
