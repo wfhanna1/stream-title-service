@@ -78,6 +78,9 @@ public class StreamTitleHandler : IStreamTitleHandler
             throw new InvalidOperationException(error);
         }
 
+        _logger?.LogInformation("Setting title on {Platform}: {Title}",
+            platform.Value, title.Value);
+
         // Set title on platform
         TitleUpdateResult result;
         try

@@ -64,7 +64,13 @@ public class RestreamTokenProvider : ITokenProvider
             });
 
             var response = await _httpClient.PostAsync(TokenEndpoint, formContent, ct);
-            response.EnsureSuccessStatusCode();
+            if (!response.IsSuccessStatusCode)
+            {
+                var errorBody = await response.Content.ReadAsStringAsync(ct);
+                _logger?.LogError("Restream token refresh failed: HTTP {StatusCode}, body: {Body}",
+                    (int)response.StatusCode, errorBody);
+                response.EnsureSuccessStatusCode();
+            }
 
             var json = await response.Content.ReadAsStringAsync(ct);
             var tokenResponse = JsonSerializer.Deserialize<TokenResponse>(json)

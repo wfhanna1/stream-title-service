@@ -24,13 +24,21 @@ public class RestreamClient : ITitlePlatformClient
 
     public async Task<TitleUpdateResult> SetTitleAsync(string title, CancellationToken ct)
     {
+        _logger?.LogInformation("Setting stream title: {Title}", title);
+
         var token = await _tokenProvider.GetAccessTokenAsync(ct);
 
         // Get all channels
         var getRequest = new HttpRequestMessage(HttpMethod.Get, "user/channel/all");
         getRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         var response = await _httpClient.SendAsync(getRequest, ct);
-        response.EnsureSuccessStatusCode();
+        if (!response.IsSuccessStatusCode)
+        {
+            var errorBody = await response.Content.ReadAsStringAsync(ct);
+            _logger?.LogError("Failed to fetch channels: HTTP {StatusCode}, body: {Body}",
+                (int)response.StatusCode, errorBody);
+            response.EnsureSuccessStatusCode();
+        }
 
         var channels = await response.Content.ReadFromJsonAsync<JsonElement[]>(ct)
             ?? Array.Empty<JsonElement>();
@@ -65,8 +73,9 @@ public class RestreamClient : ITitlePlatformClient
             else
             {
                 failed++;
-                _logger?.LogWarning("Failed to update channel {Name}: {Status}",
-                    name, patchResponse.StatusCode);
+                var errorBody = await patchResponse.Content.ReadAsStringAsync(ct);
+                _logger?.LogWarning("Failed to update channel {Name}: {Status}, body: {Body}",
+                    name, patchResponse.StatusCode, errorBody);
             }
         }
 
