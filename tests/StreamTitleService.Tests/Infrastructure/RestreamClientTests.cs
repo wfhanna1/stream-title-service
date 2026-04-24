@@ -193,6 +193,35 @@ public class RestreamClientTests
     }
 
     [Fact]
+    public async Task SetTitle_ChannelMissingEnabledProperty_ShouldLogWarningWithPropertyKeys()
+    {
+        // Simulates the case where Restream renamed the "enabled" field (e.g. to "isEnabled").
+        // The diagnostic warning log should include the actual property keys returned by the API.
+        var channels = new[]
+        {
+            new { id = "ch1", displayName = "YouTube", isEnabled = true }
+        };
+
+        SetupGetChannels(channels);
+
+        var client = CreateClient(_logger.Object);
+        var result = await client.SetTitleAsync("Test", CancellationToken.None);
+
+        result.ChannelsUpdated.Should().Be(0);
+
+        _logger.Verify(
+            x => x.Log(
+                LogLevel.Warning,
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((v, _) =>
+                    v.ToString()!.Contains("enabled") &&
+                    v.ToString()!.Contains("renamed")),
+                It.IsAny<Exception?>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Once());
+    }
+
+    [Fact]
     public async Task SetTitle_NetworkTimeout_ShouldThrow()
     {
         _httpHandler.Protected()
