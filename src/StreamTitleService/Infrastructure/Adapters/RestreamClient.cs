@@ -43,13 +43,33 @@ public class RestreamClient : ITitlePlatformClient
         var channels = await response.Content.ReadFromJsonAsync<JsonElement[]>(ct)
             ?? Array.Empty<JsonElement>();
 
+        // Logs property keys so App Insights can reveal if Restream renamed the "enabled" field.
+        if (channels.Length > 0)
+        {
+            var firstChannelKeys = string.Join(", ",
+                channels[0].EnumerateObject().Select(p => p.Name));
+            _logger?.LogDebug("Restream returned {Count} channel(s). First channel property keys: [{Keys}]",
+                channels.Length, firstChannelKeys);
+        }
+        else
+        {
+            _logger?.LogWarning("Restream returned an empty channel list");
+        }
+
         var enabledChannels = channels
             .Where(c => c.TryGetProperty("enabled", out var e) && e.GetBoolean())
             .ToList();
 
+        _logger?.LogInformation("Channel filter result: {Total} total, {Enabled} enabled",
+            channels.Length, enabledChannels.Count);
+
         if (enabledChannels.Count == 0)
         {
-            _logger?.LogWarning("No enabled channels found on Restream");
+            _logger?.LogWarning(
+                "No enabled channels found on Restream. Total channels: {Total}. " +
+                "If Total > 0 but Enabled = 0, the 'enabled' field may have been renamed in the Restream API " +
+                "or all channels are explicitly disabled. Check the channel property keys logged above.",
+                channels.Length);
             return new TitleUpdateResult(0, 0);
         }
 
