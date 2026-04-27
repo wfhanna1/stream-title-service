@@ -22,6 +22,18 @@ var host = new HostBuilder()
         services.AddApplicationInsightsTelemetryWorkerService();
         services.ConfigureFunctionsApplicationInsights();
 
+        // The .NET isolated worker installs an ApplicationInsightsLoggerProvider rule pinned at
+        // Warning, so host.json logLevel.StreamTitleService=Information has no effect for our
+        // worker code. Drop that rule so worker logs reach App Insights at the host.json level.
+        // https://learn.microsoft.com/en-us/azure/azure-functions/dotnet-isolated-process-guide#application-insights
+        services.Configure<LoggerFilterOptions>(options =>
+        {
+            var aiRule = options.Rules.FirstOrDefault(r =>
+                r.ProviderName == "Microsoft.Extensions.Logging.ApplicationInsights.ApplicationInsightsLoggerProvider");
+            if (aiRule is not null)
+                options.Rules.Remove(aiRule);
+        });
+
         // Domain configuration
         services.AddSingleton<ILocationPlatformMapper, LocationPlatformMapping>();
 
