@@ -9,6 +9,20 @@ public class YouTubeClientTests
 {
     private readonly Mock<IYouTubeServiceWrapper> _youtubeService = new();
 
+    // No-op delay so tests that exercise the broadcast-wait timeout don't actually sleep.
+    private static readonly Func<TimeSpan, CancellationToken, Task> NoopDelay = (_, _) => Task.CompletedTask;
+
+    // Short wait window so timeout-bound tests resolve quickly.
+    private static readonly TimeSpan FastWait = TimeSpan.FromMilliseconds(50);
+    private static readonly TimeSpan FastInterval = TimeSpan.FromMilliseconds(5);
+
+    private YouTubeClient NewFastClient() => new(
+        _youtubeService.Object,
+        logger: null,
+        maxBroadcastWait: FastWait,
+        broadcastPollInterval: FastInterval,
+        delayAsync: NoopDelay);
+
     [Fact]
     public async Task SetTitle_WithActiveBroadcast_ShouldUpdateVideoTitle()
     {
@@ -71,7 +85,8 @@ public class YouTubeClientTests
         _youtubeService.Setup(s => s.ListActiveBroadcastsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<LiveBroadcastInfo>());
 
-        var client = new YouTubeClient(_youtubeService.Object);
+        // Fast wait/interval so the test resolves the timeout in milliseconds, not 30 seconds.
+        var client = NewFastClient();
 
         var result = await client.SetTitleAsync("Title", CancellationToken.None);
 
@@ -95,7 +110,7 @@ public class YouTubeClientTests
                 new("other-video", "UC_other_channel", "Someone Else's Stream")
             });
 
-        var client = new YouTubeClient(_youtubeService.Object);
+        var client = NewFastClient();
 
         var result = await client.SetTitleAsync("Title", CancellationToken.None);
 
