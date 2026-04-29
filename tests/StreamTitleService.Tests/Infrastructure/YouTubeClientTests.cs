@@ -9,6 +9,20 @@ public class YouTubeClientTests
 {
     private readonly Mock<IYouTubeServiceWrapper> _youtubeService = new();
 
+    // No-op delay so tests that exercise the broadcast-wait timeout don't actually sleep.
+    private static readonly Func<TimeSpan, CancellationToken, Task> NoopDelay = (_, _) => Task.CompletedTask;
+
+    // Short wait window so timeout-bound tests resolve quickly.
+    private static readonly TimeSpan FastWait = TimeSpan.FromMilliseconds(50);
+    private static readonly TimeSpan FastInterval = TimeSpan.FromMilliseconds(5);
+
+    private YouTubeClient NewFastClient() => new(
+        _youtubeService.Object,
+        logger: null,
+        maxBroadcastWait: FastWait,
+        broadcastPollInterval: FastInterval,
+        delayAsync: NoopDelay);
+
     [Fact]
     public async Task SetTitle_WithActiveBroadcast_ShouldUpdateVideoTitle()
     {
@@ -71,7 +85,8 @@ public class YouTubeClientTests
         _youtubeService.Setup(s => s.ListActiveBroadcastsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<LiveBroadcastInfo>());
 
-        var client = new YouTubeClient(_youtubeService.Object);
+        // Fast wait/interval so the test resolves the timeout in milliseconds, not 30 seconds.
+        var client = NewFastClient();
 
         var result = await client.SetTitleAsync("Title", CancellationToken.None);
 
@@ -95,7 +110,7 @@ public class YouTubeClientTests
                 new("other-video", "UC_other_channel", "Someone Else's Stream")
             });
 
-        var client = new YouTubeClient(_youtubeService.Object);
+        var client = NewFastClient();
 
         var result = await client.SetTitleAsync("Title", CancellationToken.None);
 
@@ -251,6 +266,66 @@ public class YouTubeClientTests
 
         _youtubeService.Verify(s => s.GetVideoSnippetAsync(
             "vid-second", It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // -----------------------------------------------------------------
+    // Wait-with-retry for late-arriving YouTube broadcast
+    //
+    // YouTube's liveBroadcasts.list(broadcastStatus=active) does not
+    // recognize a stream as "active" until its RTMP ingest registers
+    // server-side, which can lag the OBS WebSocket "streaming started"
+    // ack by 5-30 seconds. Without a wait, SetTitleAsync silently no-ops
+    // and the title is never set on the visible broadcast.
+    //
+    // Real-world incident: 2026-04-29T09:25 UTC. OBS reported streaming
+    // started at 09:25:40.363; our function queried YouTube at
+    // 09:25:41.475 (~1.1s later); broadcast actually went live at
+    // 09:25:46 (~5s after our query). Function returned (0,0) and
+    // YouTube kept its channel-default title.
+    // -----------------------------------------------------------------
+
+    [Fact]
+    public async Task SetTitle_BroadcastBecomesActiveAfterFirstPoll_ShouldRetryAndUpdate()
+    {
+        _youtubeService.Setup(s => s.GetMyChannelIdAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync("UC_ch");
+
+        // First call: no broadcasts yet (broadcast hasn't gone active in YouTube).
+        // Second call: broadcast is now active. Driven by SetupSequence so Moq
+        // returns the next value on each successive call.
+        _youtubeService.SetupSequence(s => s.ListActiveBroadcastsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<LiveBroadcastInfo>())
+            .ReturnsAsync(new List<LiveBroadcastInfo>
+            {
+                new("vid-late", "UC_ch", "Late-arriving broadcast")
+            });
+
+        _youtubeService.Setup(s => s.GetVideoSnippetAsync("vid-late", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new VideoSnippetInfo("vid-late", "Late-arriving broadcast", "Desc", "UC_ch", new List<string>()));
+
+        _youtubeService.Setup(s => s.UpdateVideoSnippetAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<string>(), It.IsAny<List<string>>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        // Fake delay that returns immediately so the test doesn't actually sleep
+        // through the configured poll interval.
+        Func<TimeSpan, CancellationToken, Task> noopDelay = (_, _) => Task.CompletedTask;
+
+        var client = new YouTubeClient(
+            _youtubeService.Object,
+            logger: null,
+            maxBroadcastWait: TimeSpan.FromSeconds(30),
+            broadcastPollInterval: TimeSpan.FromSeconds(2),
+            delayAsync: noopDelay);
+
+        var result = await client.SetTitleAsync("New Title", CancellationToken.None);
+
+        result.ChannelsUpdated.Should().Be(1);
+        result.ChannelsFailed.Should().Be(0);
+
+        _youtubeService.Verify(s => s.ListActiveBroadcastsAsync(It.IsAny<CancellationToken>()),
+            Times.Exactly(2));
     }
 
     [Fact]
