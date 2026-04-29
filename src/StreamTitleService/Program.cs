@@ -89,6 +89,21 @@ var host = new HostBuilder()
         // YouTubeClient -- uses LazyYouTubeServiceWrapper to defer blob credential loading
         // until the first YouTube API call (avoids async-over-sync deadlock at startup)
         var blobStorageConnection = Environment.GetEnvironmentVariable("BLOB_STORAGE_CONNECTION");
+
+        // Wait-with-retry tuning for the YouTube broadcast race (broadcast goes
+        // active a few seconds after OBS reports streaming started). Operator-tunable
+        // via app settings; sensible defaults preserve prior behavior of the wait code.
+        var youtubeMaxWaitSeconds = int.TryParse(
+            Environment.GetEnvironmentVariable("YOUTUBE_BROADCAST_MAX_WAIT_SECONDS"), out var ytWait)
+            ? ytWait
+            : 30;
+        var youtubePollIntervalSeconds = int.TryParse(
+            Environment.GetEnvironmentVariable("YOUTUBE_BROADCAST_POLL_INTERVAL_SECONDS"), out var ytPoll)
+            ? ytPoll
+            : 2;
+        var youtubeMaxWait = TimeSpan.FromSeconds(youtubeMaxWaitSeconds);
+        var youtubePollInterval = TimeSpan.FromSeconds(youtubePollIntervalSeconds);
+
         services.AddSingleton<YouTubeClient>(sp =>
         {
             var logger = sp.GetService<Microsoft.Extensions.Logging.ILogger<YouTubeClient>>();
@@ -103,11 +118,11 @@ var host = new HostBuilder()
                     var youTubeService = await youTubeTokenProvider.CreateYouTubeServiceAsync(CancellationToken.None);
                     return new GoogleYouTubeServiceWrapper(youTubeService);
                 });
-                return new YouTubeClient(wrapper, logger);
+                return new YouTubeClient(wrapper, logger, youtubeMaxWait, youtubePollInterval);
             }
 
             logger?.LogWarning("BLOB_STORAGE_CONNECTION is not set. YouTube path will throw if invoked.");
-            return new YouTubeClient(new NullYouTubeServiceWrapper(), logger);
+            return new YouTubeClient(new NullYouTubeServiceWrapper(), logger, youtubeMaxWait, youtubePollInterval);
         });
 
         // Platform client dictionary routing TargetPlatform -> ITitlePlatformClient

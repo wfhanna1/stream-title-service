@@ -122,6 +122,14 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
           value: '90'
         }
         {
+          name: 'YOUTUBE_BROADCAST_MAX_WAIT_SECONDS'
+          value: '30'
+        }
+        {
+          name: 'YOUTUBE_BROADCAST_POLL_INTERVAL_SECONDS'
+          value: '2'
+        }
+        {
           name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
           value: appInsightsConnectionString
         }
