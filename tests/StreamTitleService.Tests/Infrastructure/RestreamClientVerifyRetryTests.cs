@@ -99,6 +99,29 @@ public class RestreamClientVerifyRetryTests
             });
     }
 
+    private void SetupVerifyGetChannelSequence(string channelId, params string[] titlesInOrder)
+    {
+        var calls = 0;
+        _httpHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.Is<HttpRequestMessage>(r =>
+                    r.Method == HttpMethod.Get &&
+                    r.RequestUri!.PathAndQuery.EndsWith($"/user/channel-meta/{channelId}")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(() =>
+            {
+                var title = titlesInOrder[Math.Min(calls, titlesInOrder.Length - 1)];
+                calls++;
+                var resp = new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = JsonContent.Create(new { title, description = (string?)null })
+                };
+                resp.Headers.TryAddWithoutValidation("cf-ray", $"test-cf-ray-{calls}");
+                resp.Headers.TryAddWithoutValidation("etag", $"W/\"test-etag-{calls}\"");
+                return resp;
+            });
+    }
+
     [Fact]
     public async Task SetTitle_VerifyMatchesFirstTry_LogsVerifiedChannelAttempts1AndNoDelays()
     {
@@ -127,5 +150,157 @@ public class RestreamClientVerifyRetryTests
                 i.Arguments[2]!.ToString()!.Contains("VerifiedChannel") &&
                 i.Arguments[2]!.ToString()!.Contains("ch1") &&
                 i.Arguments[2]!.ToString()!.Contains("attempts=1"));
+    }
+
+    [Fact]
+    public async Task SetTitle_VerifyStaleOnceThenMatches_SucceedsOnAttempt2()
+    {
+        var channels = new[]
+        {
+            new { id = "ch1", displayName = "YouTube", enabled = true, streamingPlatformId = 5 }
+        };
+        SetupGetChannels(channels);
+        SetupPatchChannel("ch1", HttpStatusCode.OK);
+        SetupVerifyGetChannelSequence("ch1", "OLD-TITLE", "Friday Bible Study");
+
+        var policy = new RestreamRetryPolicy(
+            MaxAttempts: 3,
+            InitialVerifyWait: TimeSpan.FromSeconds(5),
+            BackoffSchedule: new[] { TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(20) });
+
+        var client = CreateClient(policy);
+
+        var result = await client.SetTitleAsync("Friday Bible Study", CancellationToken.None);
+
+        result.ChannelsUpdated.Should().Be(1);
+        result.ChannelsFailed.Should().Be(0);
+
+        // Delays for attempts 1 and 2 of one channel:
+        //   attempt 1: wait 5 → GET stale → backoff 5
+        //   attempt 2: wait 5 → GET matches → done
+        _delays.Recorded.Should().Equal(
+            TimeSpan.FromSeconds(5),
+            TimeSpan.FromSeconds(5),
+            TimeSpan.FromSeconds(5));
+
+        _logger.Invocations
+            .Should()
+            .Contain(i =>
+                (LogLevel)i.Arguments[0] == LogLevel.Information &&
+                i.Arguments[2]!.ToString()!.Contains("VerifiedChannel") &&
+                i.Arguments[2]!.ToString()!.Contains("attempts=2"));
+    }
+
+    [Fact]
+    public async Task SetTitle_VerifyStaleThreeTimes_LogsStreamTitleFailedError_AndCountsFailed()
+    {
+        var channels = new[]
+        {
+            new { id = "ch1", displayName = "YouTube", enabled = true, streamingPlatformId = 5 }
+        };
+        SetupGetChannels(channels);
+        SetupPatchChannel("ch1", HttpStatusCode.OK);
+        SetupVerifyGetChannelSequence("ch1", "STALE", "STALE", "STALE");
+
+        var client = CreateClient(); // FastTestPolicy: 3 attempts, zero waits
+
+        var result = await client.SetTitleAsync("Friday Bible Study", CancellationToken.None);
+
+        result.ChannelsUpdated.Should().Be(0);
+        result.ChannelsFailed.Should().Be(1);
+
+        _logger.Invocations
+            .Should()
+            .Contain(i =>
+                (LogLevel)i.Arguments[0] == LogLevel.Error &&
+                i.Arguments[2]!.ToString()!.StartsWith("StreamTitleFailed: RestreamVerificationExhausted") &&
+                i.Arguments[2]!.ToString()!.Contains("ch1") &&
+                i.Arguments[2]!.ToString()!.Contains("attempts=3"));
+    }
+
+    [Fact]
+    public async Task SetTitle_AlwaysStaleWithConfiguredBackoff_HonorsSchedule()
+    {
+        var channels = new[]
+        {
+            new { id = "ch1", displayName = "YouTube", enabled = true, streamingPlatformId = 5 }
+        };
+        SetupGetChannels(channels);
+        SetupPatchChannel("ch1", HttpStatusCode.OK);
+        SetupVerifyGetChannelSequence("ch1", "STALE", "STALE", "STALE");
+
+        var policy = new RestreamRetryPolicy(
+            MaxAttempts: 3,
+            InitialVerifyWait: TimeSpan.FromSeconds(2),
+            BackoffSchedule: new[] { TimeSpan.FromSeconds(4), TimeSpan.FromSeconds(8) });
+
+        var client = CreateClient(policy);
+        await client.SetTitleAsync("Friday Bible Study", CancellationToken.None);
+
+        //   attempt 1: wait 2 → stale → backoff 4
+        //   attempt 2: wait 2 → stale → backoff 8
+        //   attempt 3: wait 2 → stale → exhausted (no backoff after final attempt)
+        _delays.Recorded.Should().Equal(
+            TimeSpan.FromSeconds(2),
+            TimeSpan.FromSeconds(4),
+            TimeSpan.FromSeconds(2),
+            TimeSpan.FromSeconds(8),
+            TimeSpan.FromSeconds(2));
+    }
+
+    [Fact]
+    public async Task SetTitle_PatchReturns500_LogsWarningPrefixedWithStreamTitleFailed_NoVerificationGet()
+    {
+        var channels = new[]
+        {
+            new { id = "ch1", displayName = "YouTube", enabled = true, streamingPlatformId = 5 }
+        };
+        SetupGetChannels(channels);
+        SetupPatchChannel("ch1", HttpStatusCode.InternalServerError);
+
+        var client = CreateClient();
+
+        var result = await client.SetTitleAsync("Friday Bible Study", CancellationToken.None);
+
+        result.ChannelsUpdated.Should().Be(0);
+        result.ChannelsFailed.Should().Be(1);
+
+        _logger.Invocations
+            .Should()
+            .Contain(i =>
+                (LogLevel)i.Arguments[0] == LogLevel.Warning &&
+                i.Arguments[2]!.ToString()!.StartsWith("StreamTitleFailed:"));
+
+        _delays.Recorded.Should().BeEmpty("no InitialVerifyWait when PATCH itself failed");
+    }
+
+    [Fact]
+    public async Task SetTitle_TwoChannels_AVerifiesBExhausts_ReturnsUpdated1Failed1_LogsBOnly()
+    {
+        var channels = new[]
+        {
+            new { id = "chA", displayName = "YouTube",  enabled = true, streamingPlatformId = 5  },
+            new { id = "chB", displayName = "Facebook", enabled = true, streamingPlatformId = 37 }
+        };
+        SetupGetChannels(channels);
+        SetupPatchChannel("chA", HttpStatusCode.OK);
+        SetupPatchChannel("chB", HttpStatusCode.OK);
+        SetupVerifyGetChannel("chA", returnedTitle: "Friday Bible Study");
+        SetupVerifyGetChannelSequence("chB", "STALE", "STALE", "STALE");
+
+        var client = CreateClient();
+
+        var result = await client.SetTitleAsync("Friday Bible Study", CancellationToken.None);
+
+        result.ChannelsUpdated.Should().Be(1);
+        result.ChannelsFailed.Should().Be(1);
+
+        var errorLogs = _logger.Invocations
+            .Where(i => (LogLevel)i.Arguments[0] == LogLevel.Error &&
+                        i.Arguments[2]!.ToString()!.StartsWith("StreamTitleFailed: RestreamVerificationExhausted"))
+            .ToList();
+        errorLogs.Should().HaveCount(1);
+        errorLogs[0].Arguments[2]!.ToString().Should().Contain("chB");
+        errorLogs[0].Arguments[2]!.ToString().Should().NotContain("chA");
     }
 }
