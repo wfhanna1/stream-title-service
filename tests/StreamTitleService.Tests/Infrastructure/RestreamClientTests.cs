@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Json;
 using System.Text.Json;
 using FluentAssertions;
 using Microsoft.Extensions.Logging;
@@ -6,6 +7,7 @@ using Moq;
 using Moq.Protected;
 using StreamTitleService.Application.Ports.Outbound;
 using StreamTitleService.Infrastructure.Adapters;
+using StreamTitleService.Tests.TestDoubles;
 using Xunit;
 
 namespace StreamTitleService.Tests.Infrastructure;
@@ -27,7 +29,16 @@ public class RestreamClientTests
             BaseAddress = new Uri("https://api.restream.io/v2/")
         };
 
-        return new RestreamClient(_httpClient, _tokenProvider.Object, logger);
+        // MaxAttempts=1 keeps existing tests' behavior; verification runs once with zero delay.
+        // Tests that PATCH a specific title and expect success pass verifyTitle to SetupPatchChannel
+        // so the verification GET mirrors the same title. See Task 2 of the verify-and-retry plan.
+        var policy = new RestreamRetryPolicy(
+            MaxAttempts: 1,
+            InitialVerifyWait: TimeSpan.Zero,
+            BackoffSchedule: Array.Empty<TimeSpan>());
+        var delays = new RecordingDelayProvider();
+
+        return new RestreamClient(_httpClient, _tokenProvider.Object, policy, delays, logger);
     }
 
     [Fact]
@@ -41,7 +52,7 @@ public class RestreamClientTests
         };
 
         SetupGetChannels(channels);
-        SetupPatchChannel(HttpStatusCode.OK);
+        SetupPatchChannel(HttpStatusCode.OK, verifyTitle: "Test Title");
 
         var client = CreateClient();
         var result = await client.SetTitleAsync("Test Title", CancellationToken.None);
@@ -84,7 +95,11 @@ public class RestreamClientTests
             BaseAddress = new Uri("https://api.restream.io/v2/")
         };
 
-        var client = new RestreamClient(httpClient, _tokenProvider.Object);
+        var client = new RestreamClient(
+            httpClient,
+            _tokenProvider.Object,
+            new RestreamRetryPolicy(MaxAttempts: 1, InitialVerifyWait: TimeSpan.Zero, BackoffSchedule: Array.Empty<TimeSpan>()),
+            new RecordingDelayProvider());
         var act = () => client.SetTitleAsync("Test", CancellationToken.None);
 
         await act.Should().ThrowAsync<HttpRequestException>();
@@ -114,7 +129,11 @@ public class RestreamClientTests
         {
             BaseAddress = new Uri("https://api.restream.io/v2/")
         };
-        var client = new RestreamClient(httpClient, _tokenProvider.Object);
+        var client = new RestreamClient(
+            httpClient,
+            _tokenProvider.Object,
+            new RestreamRetryPolicy(MaxAttempts: 1, InitialVerifyWait: TimeSpan.Zero, BackoffSchedule: Array.Empty<TimeSpan>()),
+            new RecordingDelayProvider());
 
         var act = () => client.SetTitleAsync("Test", CancellationToken.None);
 
@@ -146,6 +165,19 @@ public class RestreamClientTests
             {
                 var status = statuses[callCount++];
                 return Task.FromResult(new HttpResponseMessage(status));
+            });
+
+        // Verification GET for the channels that PATCH succeeds on (ch1 and ch3) returns the title.
+        _httpHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.Is<HttpRequestMessage>(r =>
+                    r.Method == HttpMethod.Get &&
+                    r.RequestUri!.PathAndQuery.Contains("/user/channel-meta/")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(() => new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = JsonContent.Create(new { title = "Test Title", description = (string?)null })
             });
 
         var client = CreateClient();
@@ -238,7 +270,7 @@ public class RestreamClientTests
             .WithMessage("Connection timeout");
     }
 
-    private void SetupPatchChannel(HttpStatusCode status)
+    private void SetupPatchChannel(HttpStatusCode status, string? verifyTitle = null)
     {
         _httpHandler.Protected()
             .Setup<Task<HttpResponseMessage>>(
@@ -246,6 +278,23 @@ public class RestreamClientTests
                 ItExpr.Is<HttpRequestMessage>(r => r.Method == HttpMethod.Patch),
                 ItExpr.IsAny<CancellationToken>())
             .ReturnsAsync(new HttpResponseMessage(status));
+
+        // Mirror the PATCHed title in the verification GET so the post-PATCH
+        // verification step in RestreamClient sees a match for happy-path tests.
+        if (verifyTitle is not null)
+        {
+            _httpHandler.Protected()
+                .Setup<Task<HttpResponseMessage>>(
+                    "SendAsync",
+                    ItExpr.Is<HttpRequestMessage>(r =>
+                        r.Method == HttpMethod.Get &&
+                        r.RequestUri!.PathAndQuery.Contains("/user/channel-meta/")),
+                    ItExpr.IsAny<CancellationToken>())
+                .ReturnsAsync(() => new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = JsonContent.Create(new { title = verifyTitle, description = (string?)null })
+                });
+        }
     }
 
     // Fix #2: per-request headers instead of DefaultRequestHeaders (thread-safe)
@@ -254,7 +303,7 @@ public class RestreamClientTests
     {
         // Verifies fix #2: per-request headers instead of DefaultRequestHeaders
         SetupGetChannels(new[] { new { id = "ch1", displayName = "YT", enabled = true, streamingPlatformId = 5 } });
-        SetupPatchChannel(HttpStatusCode.OK);
+        SetupPatchChannel(HttpStatusCode.OK, verifyTitle: "Test");
 
         var client = CreateClient();
         await client.SetTitleAsync("Test", CancellationToken.None);
@@ -267,7 +316,7 @@ public class RestreamClientTests
     public async Task SetTitle_ShouldLogEntryWithTitle()
     {
         SetupGetChannels(new[] { new { id = "ch1", displayName = "YT", enabled = true, streamingPlatformId = 5 } });
-        SetupPatchChannel(HttpStatusCode.OK);
+        SetupPatchChannel(HttpStatusCode.OK, verifyTitle: "Sunday Liturgy");
 
         var client = CreateClient(_logger.Object);
         await client.SetTitleAsync("Sunday Liturgy", CancellationToken.None);

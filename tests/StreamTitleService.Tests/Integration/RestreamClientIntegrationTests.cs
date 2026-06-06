@@ -4,6 +4,7 @@ using Azure.Identity;
 using Azure.Security.KeyVault.Secrets;
 using FluentAssertions;
 using StreamTitleService.Infrastructure.Adapters;
+using StreamTitleService.Infrastructure.Time;
 using Xunit;
 
 namespace StreamTitleService.Tests.Integration;
@@ -121,7 +122,11 @@ public class RestreamClientIntegrationTests
         var (provider, _) = await BuildTokenProviderAsync();
 
         using var httpClient = new HttpClient { BaseAddress = new Uri(RestreamBaseUrl) };
-        var client = new RestreamClient(httpClient, provider);
+        var client = new RestreamClient(
+            httpClient,
+            provider,
+            RestreamRetryPolicy.Defaults,
+            new SystemDelayProvider());
 
         var result = await client.SetTitleAsync(TestTitle!, CancellationToken.None);
 

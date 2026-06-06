@@ -76,14 +76,21 @@ var host = new HostBuilder()
         .AddPolicyHandler(GetRetryPolicy())
         .AddPolicyHandler(GetCircuitBreakerPolicy());
 
-        // RestreamClient (Singleton)
+        // RestreamClient (Singleton). Verify-and-retry policy + delay provider here use
+        // RestreamRetryPolicy.Defaults; Task 9 of the verify-and-retry plan replaces these
+        // with env-var-parsed values via RestreamRetryPolicyParser.
         services.AddSingleton<RestreamClient>(sp =>
         {
             var httpClientFactory = sp.GetRequiredService<IHttpClientFactory>();
             var httpClient = httpClientFactory.CreateClient("RestreamClient");
             var tokenProvider = sp.GetRequiredService<ITokenProvider>();
             var logger = sp.GetService<Microsoft.Extensions.Logging.ILogger<RestreamClient>>();
-            return new RestreamClient(httpClient, tokenProvider, logger);
+            return new RestreamClient(
+                httpClient,
+                tokenProvider,
+                RestreamRetryPolicy.Defaults,
+                new StreamTitleService.Infrastructure.Time.SystemDelayProvider(),
+                logger);
         });
 
         // YouTubeClient -- uses LazyYouTubeServiceWrapper to defer blob credential loading

@@ -4,6 +4,10 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <IsPackable>false</IsPackable>
+    <!-- Local-dev workaround: roll forward to whatever major .NET runtime is installed
+         so the test suite can run on machines that have only net10 but not net9.
+         CI which has net9 will continue to use net9 unchanged. Test-project only. -->
+    <RollForward>LatestMajor</RollForward>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.0.0" />
