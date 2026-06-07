@@ -269,20 +269,23 @@ public class StreamTitleHandlerComponentTests
 
     // ------------------------------------------------------------------
     // Scenario 9: Platform client returns partial failure (2 updated,
-    //             1 failed). Handler completes successfully (no throw).
+    //             1 failed). Updated semantics from verify-and-retry spec:
+    //             title drift across mirror channels is unacceptable, so the
+    //             handler throws so SB dead-letters and the failure alert fires.
     // ------------------------------------------------------------------
     [Fact]
-    public async Task PartialPlatformFailure_StillCompletes()
+    public async Task PartialPlatformFailure_ThrowsAndFiresAlert()
     {
         var timestamp = DateTimeOffset.UtcNow;
         var evt = CreateEvent("virtual", "Partial Update Stream", timestamp);
 
         _restreamFake.ResultToReturn = new TitleUpdateResult(2, 1);
 
-        await _handler.HandleAsync(evt, CancellationToken.None);
+        var act = () => _handler.HandleAsync(evt, CancellationToken.None);
 
+        await act.Should().ThrowAsync<InvalidOperationException>();
         _restreamFake.TitlesReceived.Should().ContainSingle();
-        _alertNotifier.Alerts.Should().BeEmpty();
+        _alertNotifier.Alerts.Should().ContainSingle();
     }
 
     // ------------------------------------------------------------------
