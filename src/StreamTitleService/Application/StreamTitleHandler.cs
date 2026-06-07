@@ -97,5 +97,17 @@ public class StreamTitleHandler : IStreamTitleHandler
 
         _logger?.LogInformation("StreamTitleSet: Title={Title}, Platform={Platform}, ChannelsUpdated={Updated}, ChannelsFailed={Failed}",
             title.Value, platform.Value, result.ChannelsUpdated, result.ChannelsFailed);
+
+        // Per-channel failure is unrecoverable here: mirror channels must carry the same
+        // title and title drift is unacceptable. Throw so the Service Bus subscription
+        // dead-letters the message and stream-title-deadletter-alert fires immediately.
+        if (result.ChannelsFailed > 0)
+        {
+            var failureMsg = $"ChannelsFailed={result.ChannelsFailed} (ChannelsUpdated={result.ChannelsUpdated}) on platform {platform.Value}";
+            _logger?.LogError("StreamTitleFailed: Title={Title}, Platform={Platform}, Error={Error}",
+                title.Value, platform.Value, failureMsg);
+            await _alertNotifier.SendFailureAlertAsync(title.Value, failureMsg, ct);
+            throw new InvalidOperationException(failureMsg);
+        }
     }
 }

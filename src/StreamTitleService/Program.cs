@@ -76,6 +76,18 @@ var host = new HostBuilder()
         .AddPolicyHandler(GetRetryPolicy())
         .AddPolicyHandler(GetCircuitBreakerPolicy());
 
+        // Restream verify-and-retry policy: env-bound at the composition root, 12-factor III.
+        // Same inline-env-var + TryParse pattern as the YOUTUBE_BROADCAST_* tunables below.
+        var restreamEnv = new Dictionary<string, string?>
+        {
+            ["RESTREAM_VERIFY_MAX_ATTEMPTS"] = Environment.GetEnvironmentVariable("RESTREAM_VERIFY_MAX_ATTEMPTS"),
+            ["RESTREAM_VERIFY_INITIAL_WAIT_SECONDS"] = Environment.GetEnvironmentVariable("RESTREAM_VERIFY_INITIAL_WAIT_SECONDS"),
+            ["RESTREAM_VERIFY_BACKOFF_SECONDS"] = Environment.GetEnvironmentVariable("RESTREAM_VERIFY_BACKOFF_SECONDS"),
+        };
+        var restreamPolicy = StreamTitleService.Composition.RestreamRetryPolicyParser.FromEnvironment(restreamEnv);
+        StreamTitleService.Infrastructure.Time.IDelayProvider restreamDelayProvider =
+            new StreamTitleService.Infrastructure.Time.SystemDelayProvider();
+
         // RestreamClient (Singleton)
         services.AddSingleton<RestreamClient>(sp =>
         {
@@ -83,7 +95,12 @@ var host = new HostBuilder()
             var httpClient = httpClientFactory.CreateClient("RestreamClient");
             var tokenProvider = sp.GetRequiredService<ITokenProvider>();
             var logger = sp.GetService<Microsoft.Extensions.Logging.ILogger<RestreamClient>>();
-            return new RestreamClient(httpClient, tokenProvider, logger);
+            return new RestreamClient(
+                httpClient,
+                tokenProvider,
+                restreamPolicy,
+                restreamDelayProvider,
+                logger);
         });
 
         // YouTubeClient -- uses LazyYouTubeServiceWrapper to defer blob credential loading

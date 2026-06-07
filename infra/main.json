@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.41.2.15936",
-      "templateHash": "4744391261502259212"
+      "templateHash": "3495428143820234036"
     }
   },
   "parameters": {
@@ -76,7 +76,8 @@
     "appName": "[format('stream-title-svc-{0}', variables('suffix'))]",
     "storageAccountName": "[format('strtitlesvc{0}', take(variables('suffix'), 10))]",
     "keyVaultSecretsUserRoleId": "4633458b-17de-408a-b874-0445c86b69e6",
-    "storageBlobDataReaderRoleId": "2a2b9908-6ea1-4ae2-8e65-a410df84e7d1"
+    "storageBlobDataReaderRoleId": "2a2b9908-6ea1-4ae2-8e65-a410df84e7d1",
+    "storageBlobDataOwnerRoleId": "b7e6dc6d-f1e8-4753-8033-0f276bb0955b"
   },
   "resources": [
     {
@@ -162,19 +163,38 @@
               "value": "90"
             },
             {
+              "name": "YOUTUBE_BROADCAST_MAX_WAIT_SECONDS",
+              "value": "30"
+            },
+            {
+              "name": "YOUTUBE_BROADCAST_POLL_INTERVAL_SECONDS",
+              "value": "2"
+            },
+            {
+              "name": "RESTREAM_VERIFY_MAX_ATTEMPTS",
+              "value": "3"
+            },
+            {
+              "name": "RESTREAM_VERIFY_INITIAL_WAIT_SECONDS",
+              "value": "5"
+            },
+            {
+              "name": "RESTREAM_VERIFY_BACKOFF_SECONDS",
+              "value": "5,10,20"
+            },
+            {
               "name": "APPLICATIONINSIGHTS_CONNECTION_STRING",
               "value": "[parameters('appInsightsConnectionString')]"
             },
             {
-              "name": "AzureWebJobsStorage__accountName",
-              "value": "[variables('storageAccountName')]"
+              "name": "AzureWebJobsStorage",
+              "value": "[format('DefaultEndpointsProtocol=https;AccountName={0};EndpointSuffix={1};AccountKey={2}', variables('storageAccountName'), environment().suffixes.storage, listKeys(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), '2023-01-01').keys[0].value)]"
             },
             {
               "name": "DEPLOYMENT_STORAGE_CONNECTION_STRING",
               "value": "[format('DefaultEndpointsProtocol=https;AccountName={0};EndpointSuffix={1};AccountKey={2}', variables('storageAccountName'), environment().suffixes.storage, listKeys(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), '2023-01-01').keys[0].value)]"
             }
-          ],
-          "linuxFxVersion": "DOTNET-ISOLATED|9.0"
+          ]
         },
         "functionAppConfig": {
           "deployment": {
@@ -228,6 +248,21 @@
       },
       "dependsOn": [
         "[resourceId('Microsoft.Web/sites', variables('appName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]",
+      "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), resourceId('Microsoft.Web/sites', variables('appName')), variables('storageBlobDataOwnerRoleId'))]",
+      "properties": {
+        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('storageBlobDataOwnerRoleId'))]",
+        "principalId": "[reference(resourceId('Microsoft.Web/sites', variables('appName')), '2024-04-01', 'full').identity.principalId]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/sites', variables('appName'))]",
+        "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]"
       ]
     }
   ],

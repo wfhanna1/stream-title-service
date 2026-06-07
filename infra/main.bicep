@@ -130,6 +130,18 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
           value: '2'
         }
         {
+          name: 'RESTREAM_VERIFY_MAX_ATTEMPTS'
+          value: '3'
+        }
+        {
+          name: 'RESTREAM_VERIFY_INITIAL_WAIT_SECONDS'
+          value: '5'
+        }
+        {
+          name: 'RESTREAM_VERIFY_BACKOFF_SECONDS'
+          value: '5,10,20'
+        }
+        {
           name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
           value: appInsightsConnectionString
         }

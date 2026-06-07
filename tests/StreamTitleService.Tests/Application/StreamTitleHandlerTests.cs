@@ -108,15 +108,20 @@ public class StreamTitleHandlerTests
     }
 
     [Fact]
-    public async Task Handle_PartialSuccess_ShouldLogWithCorrectCounts()
+    public async Task Handle_PartialSuccess_LogsStreamTitleSetAndThenThrowsToDeadLetter()
     {
+        // Updated semantics from verify-and-retry spec: any per-channel failure makes
+        // the handler throw so the SB subscription dead-letters. The StreamTitleSet
+        // info log still fires first (it records the partial counts).
         var evt = CreateEvent("virtual", "Arabic Bible Study", DateTimeOffset.UtcNow);
         _restreamClient.Setup(c => c.SetTitleAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new TitleUpdateResult(2, 1));
 
-        await _handler.HandleAsync(evt, CancellationToken.None);
+        var act = () => _handler.HandleAsync(evt, CancellationToken.None);
 
+        await act.Should().ThrowAsync<InvalidOperationException>();
         VerifyLogContains(LogLevel.Information, "StreamTitleSet");
+        VerifyLogContains(LogLevel.Error, "StreamTitleFailed");
     }
 
     [Fact]
@@ -214,6 +219,24 @@ public class StreamTitleHandlerTests
                 It.IsAny<Exception?>(),
                 It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
             Times.Once());
+    }
+
+    [Fact]
+    public async Task Handle_PlatformClientReturnsAnyChannelFailed_ShouldThrowSoSbDeadLetters()
+    {
+        // RestreamClient may complete normally but return ChannelsFailed > 0 when a
+        // per-channel verification step fails (see verify-and-retry spec). Title drift
+        // across mirror channels is unacceptable; surface as an exception so the
+        // Service Bus subscription dead-letters and stream-title-deadletter-alert fires.
+        var evt = CreateEvent("virtual", "Friday Bible Study", DateTimeOffset.UtcNow);
+        _restreamClient.Setup(c => c.SetTitleAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TitleUpdateResult(ChannelsUpdated: 1, ChannelsFailed: 1));
+
+        var act = () => _handler.HandleAsync(evt, CancellationToken.None);
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .Where(ex => ex.Message.Contains("ChannelsFailed"));
+        VerifyLogContains(LogLevel.Error, "StreamTitleFailed");
     }
 
     private static StreamStartedEvent CreateEvent(string location, string? title, DateTimeOffset timestamp)
