@@ -100,12 +100,17 @@ public class RestreamClient : ITitlePlatformClient
     private async Task<bool> TryUpdateAndVerifyChannelAsync(
         string channelId, string channelName, string expectedTitle, string token, CancellationToken ct)
     {
+        var attempts = new List<AttemptLog>();
+
         for (var attempt = 1; attempt <= _retryPolicy.MaxAttempts; attempt++)
         {
             var patchReq = new HttpRequestMessage(HttpMethod.Patch, $"user/channel-meta/{channelId}");
             patchReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
             patchReq.Content = JsonContent.Create(new { title = expectedTitle });
             var patchResp = await _httpClient.SendAsync(patchReq, ct);
+
+            var patchCfRay = ExtractHeader(patchResp.Headers, "cf-ray");
+            var patchEtag = ExtractHeader(patchResp.Headers, "etag");
 
             if (!patchResp.IsSuccessStatusCode)
             {
@@ -123,12 +128,24 @@ public class RestreamClient : ITitlePlatformClient
             getReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
             var getResp = await _httpClient.SendAsync(getReq, ct);
 
-            string? actualTitle = null;
+            var getCfRay = ExtractHeader(getResp.Headers, "cf-ray");
+            var getEtag = ExtractHeader(getResp.Headers, "etag");
+
+            string actualTitle = "";
             if (getResp.IsSuccessStatusCode)
             {
                 var meta = await getResp.Content.ReadFromJsonAsync<JsonElement>(ct);
-                if (meta.TryGetProperty("title", out var t)) actualTitle = t.GetString();
+                if (meta.TryGetProperty("title", out var t)) actualTitle = t.GetString() ?? "";
             }
+
+            attempts.Add(new AttemptLog(
+                PatchStatus: (int)patchResp.StatusCode,
+                PatchCfRay: patchCfRay,
+                PatchEtag: patchEtag,
+                GetStatus: (int)getResp.StatusCode,
+                GetBodyTitle: actualTitle,
+                GetCfRay: getCfRay,
+                GetEtag: getEtag));
 
             if (string.Equals(actualTitle, expectedTitle, StringComparison.Ordinal))
             {
@@ -146,9 +163,48 @@ public class RestreamClient : ITitlePlatformClient
             }
         }
 
+        var forensics = BuildForensicLogParts(attempts);
         _logger?.LogError(
-            "{Prefix}: RestreamVerificationExhausted channel={Name} channel_id={ChannelId} expected={Expected} attempts={Attempts}",
-            FailedLogPrefix, channelName, channelId, expectedTitle, _retryPolicy.MaxAttempts);
+            "{Prefix}: RestreamVerificationExhausted channel={Name} channel_id={ChannelId} expected={Expected} attempts={Attempts} " +
+            "patch_status_per_attempt={PatchStatuses} get_status_per_attempt={GetStatuses} " +
+            "patch_cf_ray_per_attempt={PatchCfRays} get_cf_ray_per_attempt={GetCfRays} " +
+            "patch_etag_per_attempt={PatchEtags} get_etag_per_attempt={GetEtags} " +
+            "get_body_title_per_attempt={GetTitles}",
+            FailedLogPrefix, channelName, channelId, expectedTitle, _retryPolicy.MaxAttempts,
+            forensics.PatchStatuses, forensics.GetStatuses,
+            forensics.PatchCfRays, forensics.GetCfRays,
+            forensics.PatchEtags, forensics.GetEtags,
+            forensics.GetTitles);
         return false;
     }
+
+    private static string ExtractHeader(System.Net.Http.Headers.HttpHeaders headers, string name)
+        => headers.TryGetValues(name, out var values) ? string.Join(";", values) : "";
+
+    private static ForensicLogParts BuildForensicLogParts(IReadOnlyList<AttemptLog> attempts) => new(
+        PatchStatuses: string.Join(",", attempts.Select(a => a.PatchStatus)),
+        GetStatuses:   string.Join(",", attempts.Select(a => a.GetStatus)),
+        PatchCfRays:   string.Join(",", attempts.Select(a => a.PatchCfRay)),
+        GetCfRays:     string.Join(",", attempts.Select(a => a.GetCfRay)),
+        PatchEtags:    string.Join(",", attempts.Select(a => a.PatchEtag)),
+        GetEtags:      string.Join(",", attempts.Select(a => a.GetEtag)),
+        GetTitles:     string.Join(",", attempts.Select(a => a.GetBodyTitle)));
+
+    private sealed record AttemptLog(
+        int PatchStatus,
+        string PatchCfRay,
+        string PatchEtag,
+        int GetStatus,
+        string GetBodyTitle,
+        string GetCfRay,
+        string GetEtag);
+
+    private sealed record ForensicLogParts(
+        string PatchStatuses,
+        string GetStatuses,
+        string PatchCfRays,
+        string GetCfRays,
+        string PatchEtags,
+        string GetEtags,
+        string GetTitles);
 }

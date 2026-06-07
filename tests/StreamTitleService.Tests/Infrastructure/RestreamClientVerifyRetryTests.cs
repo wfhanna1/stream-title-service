@@ -275,6 +275,70 @@ public class RestreamClientVerifyRetryTests
     }
 
     [Fact]
+    public async Task SetTitle_VerificationExhausted_ErrorLogIncludesForensicCsvFields()
+    {
+        var channels = new[]
+        {
+            new { id = "ch1", displayName = "YouTube", enabled = true, streamingPlatformId = 5 }
+        };
+        SetupGetChannels(channels);
+
+        var patchCalls = 0;
+        _httpHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.Is<HttpRequestMessage>(r =>
+                    r.Method == HttpMethod.Patch &&
+                    r.RequestUri!.PathAndQuery.EndsWith("/user/channel-meta/ch1")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(() =>
+            {
+                patchCalls++;
+                var resp = new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(string.Empty)
+                };
+                resp.Headers.TryAddWithoutValidation("cf-ray", $"patch-ray-{patchCalls}");
+                resp.Headers.TryAddWithoutValidation("etag", $"W/\"patch-etag-{patchCalls}\"");
+                return resp;
+            });
+
+        var getCalls = 0;
+        _httpHandler.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.Is<HttpRequestMessage>(r =>
+                    r.Method == HttpMethod.Get &&
+                    r.RequestUri!.PathAndQuery.EndsWith("/user/channel-meta/ch1")),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(() =>
+            {
+                getCalls++;
+                var resp = new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = JsonContent.Create(new { title = "STALE", description = (string?)null })
+                };
+                resp.Headers.TryAddWithoutValidation("cf-ray", $"get-ray-{getCalls}");
+                resp.Headers.TryAddWithoutValidation("etag", $"W/\"get-etag-{getCalls}\"");
+                return resp;
+            });
+
+        var client = CreateClient();
+        await client.SetTitleAsync("Friday Bible Study", CancellationToken.None);
+
+        var errorLog = _logger.Invocations.Single(i =>
+            (LogLevel)i.Arguments[0] == LogLevel.Error &&
+            i.Arguments[2]!.ToString()!.StartsWith("StreamTitleFailed: RestreamVerificationExhausted"));
+
+        var rendered = errorLog.Arguments[2]!.ToString()!;
+        rendered.Should().Contain("patch_status_per_attempt=200,200,200");
+        rendered.Should().Contain("get_status_per_attempt=200,200,200");
+        rendered.Should().Contain("patch_cf_ray_per_attempt=patch-ray-1,patch-ray-2,patch-ray-3");
+        rendered.Should().Contain("get_cf_ray_per_attempt=get-ray-1,get-ray-2,get-ray-3");
+        rendered.Should().Contain("get_body_title_per_attempt=STALE,STALE,STALE");
+        rendered.Should().Contain("patch-etag-1");
+        rendered.Should().Contain("get-etag-3");
+    }
+
+    [Fact]
     public async Task SetTitle_TwoChannels_AVerifiesBExhausts_ReturnsUpdated1Failed1_LogsBOnly()
     {
         var channels = new[]
