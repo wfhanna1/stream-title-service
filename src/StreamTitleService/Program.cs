@@ -76,9 +76,19 @@ var host = new HostBuilder()
         .AddPolicyHandler(GetRetryPolicy())
         .AddPolicyHandler(GetCircuitBreakerPolicy());
 
-        // RestreamClient (Singleton). Verify-and-retry policy + delay provider here use
-        // RestreamRetryPolicy.Defaults; Task 9 of the verify-and-retry plan replaces these
-        // with env-var-parsed values via RestreamRetryPolicyParser.
+        // Restream verify-and-retry policy: env-bound at the composition root, 12-factor III.
+        // Same inline-env-var + TryParse pattern as the YOUTUBE_BROADCAST_* tunables below.
+        var restreamEnv = new Dictionary<string, string?>
+        {
+            ["RESTREAM_VERIFY_MAX_ATTEMPTS"] = Environment.GetEnvironmentVariable("RESTREAM_VERIFY_MAX_ATTEMPTS"),
+            ["RESTREAM_VERIFY_INITIAL_WAIT_SECONDS"] = Environment.GetEnvironmentVariable("RESTREAM_VERIFY_INITIAL_WAIT_SECONDS"),
+            ["RESTREAM_VERIFY_BACKOFF_SECONDS"] = Environment.GetEnvironmentVariable("RESTREAM_VERIFY_BACKOFF_SECONDS"),
+        };
+        var restreamPolicy = StreamTitleService.Composition.RestreamRetryPolicyParser.FromEnvironment(restreamEnv);
+        StreamTitleService.Infrastructure.Time.IDelayProvider restreamDelayProvider =
+            new StreamTitleService.Infrastructure.Time.SystemDelayProvider();
+
+        // RestreamClient (Singleton)
         services.AddSingleton<RestreamClient>(sp =>
         {
             var httpClientFactory = sp.GetRequiredService<IHttpClientFactory>();
@@ -88,8 +98,8 @@ var host = new HostBuilder()
             return new RestreamClient(
                 httpClient,
                 tokenProvider,
-                RestreamRetryPolicy.Defaults,
-                new StreamTitleService.Infrastructure.Time.SystemDelayProvider(),
+                restreamPolicy,
+                restreamDelayProvider,
                 logger);
         });
 
